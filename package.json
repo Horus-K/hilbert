@@ -1,0 +1,16 @@
+{
+  "name": "hilbert-demo",
+  "version": "1.0.0",
+  "description": "可配置多页面嵌入的后台管理面板（ChatGPT 风格 UI）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "marked": "^18.0.9"
+  },
+  "engines": {
+    "node": ">=24.19.0"
+  }
+}

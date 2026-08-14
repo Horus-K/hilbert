@@ -29,7 +29,11 @@
 
       <button class="settings-entry" id="settingsEntry">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        设置
+        <span>设置</span>
+        <span class="settings-spacer"></span>
+        <span class="refresh-btn" id="refreshBtn" title="清除浏览器缓存并重新加载">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </span>
       </button>
 
       <div class="sidebar-footer">
@@ -138,6 +142,14 @@
           <label>嵌入链接 <span class="required">*</span></label>
           <input type="url" id="fieldUrl" placeholder="https://example.com/..." required />
         </div>
+        <div class="form-item hidden" id="proxyModeField">
+          <label>代理模式</label>
+          <select id="fieldProxyMode">
+            <option value="identity">恒等映射（默认，直接用目标 URL 路径作为代理入口）</option>
+            <option value="mount">挂载 /hilbert-proxy/&lt;页面id&gt;（根路径站点或恒等映射异常时选用）</option>
+          </select>
+          <p class="form-hint" id="proxyModeHint">恒等映射 URL 更简洁；若站点 URL 没有路径（如 https://notes.example.com/），需选择挂载模式</p>
+        </div>
         <div class="form-item hidden" id="authField">
           <label class="checkbox-label">
             <input type="checkbox" id="authEnabled" />
@@ -154,6 +166,16 @@
               <input type="password" id="authPass" placeholder="密码" autocomplete="new-password" />
             </div>
             <input type="text" class="auth-login-path hidden" id="authLoginPath" placeholder="登录接口路径（默认 /login）" />
+            <div class="auth-login-opts hidden" id="authLoginOpts">
+              <select id="authLoginFormat" title="登录请求体格式">
+                <option value="json">登录请求格式：JSON（如 Grafana）</option>
+                <option value="form">登录请求格式：表单（如 XXL-JOB）</option>
+              </select>
+              <div class="auth-inputs">
+                <input type="text" id="authUserField" placeholder="用户名字段名（默认 user）" autocomplete="off" />
+                <input type="text" id="authPasswordField" placeholder="密码字段名（默认 password）" autocomplete="off" />
+              </div>
+            </div>
             <div class="auth-inputs hidden" id="authHeaderInputs">
               <input type="text" id="authHeaderName" placeholder="请求头名称，如 Authorization" />
               <input type="text" id="authHeaderValue" placeholder="请求头值，如 Bearer xxx" />

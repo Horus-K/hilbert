@@ -4,9 +4,15 @@ const path = require('path');
 const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
+const zlib = require('zlib');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+// 出方向代理连接池：复用与目标站的 TCP/TLS 连接，避免每个请求重新三次握手
+const httpAgent = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'pages.json');
@@ -27,13 +33,13 @@ const DEFAULT_PAGES = [
   }
 ];
 
-// 只对 /api 路由解析 JSON 请求体：不能全局注册，否则会提前消费 /proxy/ 下
-// 转发请求的 application/json 请求体，导致代理永久挂起（如 Grafana 的 /api/ds/query）
-app.use('/api', express.json());
+// 只对 /hilbert-api 路由解析 JSON 请求体：不能全局注册，否则会提前消费代理请求的
+// application/json 请求体，导致代理永久挂起（如 Grafana 的 /api/ds/query）
+app.use('/hilbert-api', express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 健康检查：供容器编排（Docker HEALTHCHECK / K8s 探针）使用
-app.get('/api/health', (req, res) => {
+app.get('/hilbert-api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
@@ -48,12 +54,27 @@ function ensureDataFile() {
   }
 }
 
+// 页面配置内存缓存：每个代理转发请求（含目标站加载的大量子资源）都要按路径
+// 查页面，若每次都同步读盘 + JSON.parse 会阻塞事件循环。读走缓存、写时刷新即可
+let pagesCache = null;
+
 function readPages() {
+  if (pagesCache) return pagesCache;
   ensureDataFile();
   try {
     const pages = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    // 兼容旧数据：没有 type 字段的一律视为外部链接页面
-    return pages.map(p => ({ type: 'link', ...p }));
+    // 兼容旧数据：没有 type 字段的一律视为外部链接页面；auth 在读入时规范化
+    //（旧配置可能缺 login 模式的 userField/passwordField 等字段，若只在 API 写入时
+    // 补齐，存量配置直接用 performLogin 会拼出错误字段名导致登录失败）
+    pagesCache = pages.map(p => {
+      const page = { type: 'link', ...p };
+      if (page.auth) {
+        const normalized = normalizeAuth(page.auth);
+        if (normalized !== undefined) page.auth = normalized;
+      }
+      return page;
+    });
+    return pagesCache;
   } catch (err) {
     console.error('读取配置失败，返回默认配置:', err.message);
     return DEFAULT_PAGES;
@@ -63,6 +84,7 @@ function readPages() {
 function writePages(pages) {
   ensureDataFile();
   fs.writeFileSync(DATA_FILE, JSON.stringify(pages, null, 2), 'utf8');
+  pagesCache = pages;
 }
 
 function isValidUrl(str) {
@@ -91,6 +113,16 @@ function normalizeAuth(auth) {
     let loginPath = String(auth.loginPath || '/login').trim() || '/login';
     if (!loginPath.startsWith('/')) loginPath = '/' + loginPath;
     normalized.loginPath = loginPath;
+    // 登录请求体格式：json（默认，如 Grafana）/ form（表单编码，如 XXL-JOB）
+    const loginFormat = auth.loginFormat || 'json';
+    if (!['json', 'form'].includes(loginFormat)) return undefined;
+    normalized.loginFormat = loginFormat;
+    // 目标站的用户名/密码字段名，默认 user/password（如 XXL-JOB 为 userName/password）
+    const userField = String(auth.userField || 'user').trim();
+    const passwordField = String(auth.passwordField || 'password').trim();
+    if (!userField || !passwordField) return undefined;
+    normalized.userField = userField;
+    normalized.passwordField = passwordField;
   }
   return normalized;
 }
@@ -136,13 +168,13 @@ function resolvePage(page) {
 // ---------- API：页面配置 ----------
 
 // 获取全部页面
-app.get('/api/pages', (req, res) => {
+app.get('/hilbert-api/pages', (req, res) => {
   res.json(readPages().map(resolvePage));
 });
 
 // 新增页面
-app.post('/api/pages', (req, res) => {
-  const { type = 'link', name, url, icon, group, content, auth } = req.body || {};
+app.post('/hilbert-api/pages', (req, res) => {
+  const { type = 'link', name, url, icon, group, content, auth, proxyMode } = req.body || {};
   if (!PAGE_TYPES.includes(type)) {
     return res.status(400).json({ error: '不支持的页面类型' });
   }
@@ -162,6 +194,8 @@ app.post('/api/pages', (req, res) => {
   };
   if (type === 'link') {
     page.url = url.trim();
+    // 代理模式：mount（/hilbert-proxy/<id> 挂载）由编辑页面手动指定；默认恒等映射（不落盘该字段）
+    if (proxyMode === 'mount') page.proxyMode = 'mount';
     const normalized = normalizeAuth(auth);
     if (normalized === undefined) {
       return res.status(400).json({ error: '认证信息不完整' });
@@ -180,13 +214,13 @@ app.post('/api/pages', (req, res) => {
 });
 
 // 更新页面
-app.put('/api/pages/:id', (req, res) => {
+app.put('/hilbert-api/pages/:id', (req, res) => {
   const pages = readPages();
   const idx = pages.findIndex(p => p.id === req.params.id);
   if (idx === -1) {
     return res.status(404).json({ error: '页面不存在' });
   }
-  const { type, name, url, icon, group, content, auth } = req.body || {};
+  const { type, name, url, icon, group, content, auth, proxyMode } = req.body || {};
   const current = pages[idx];
 
   if (type !== undefined) {
@@ -198,6 +232,10 @@ app.put('/api/pages/:id', (req, res) => {
     current.name = name.trim();
   }
   if (url !== undefined) current.url = url.trim();
+  if (proxyMode !== undefined) {
+    if (proxyMode === 'mount') current.proxyMode = 'mount';
+    else delete current.proxyMode; // 切回恒等映射：移除该字段
+  }
   if (auth !== undefined) {
     const normalized = normalizeAuth(auth);
     if (normalized === undefined) {
@@ -239,7 +277,7 @@ app.put('/api/pages/:id', (req, res) => {
 });
 
 // 删除页面
-app.delete('/api/pages/:id', (req, res) => {
+app.delete('/hilbert-api/pages/:id', (req, res) => {
   const pages = readPages();
   const idx = pages.findIndex(p => p.id === req.params.id);
   if (idx === -1) {
@@ -278,12 +316,12 @@ function writeGroups(groups) {
 }
 
 // 获取全部分组
-app.get('/api/groups', (req, res) => {
+app.get('/hilbert-api/groups', (req, res) => {
   res.json(readGroups());
 });
 
 // 新增分组
-app.post('/api/groups', (req, res) => {
+app.post('/hilbert-api/groups', (req, res) => {
   const name = ((req.body || {}).name || '').trim();
   if (!name) {
     return res.status(400).json({ error: '分组名称不能为空' });
@@ -301,7 +339,7 @@ app.post('/api/groups', (req, res) => {
 });
 
 // 删除分组（该分组下的页面移至未分组）
-app.delete('/api/groups/:name', (req, res) => {
+app.delete('/hilbert-api/groups/:name', (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const groups = readGroups();
   const idx = groups.indexOf(name);
@@ -323,7 +361,8 @@ app.delete('/api/groups/:name', (req, res) => {
 });
 
 // ---------- 反向代理：自动注入认证 ----------
-// iframe 无法自定义请求头，因此配置了认证的页面通过本代理转发，并剥离目标站的 iframe 嵌入限制响应头
+// 所有 link 页面均经本代理转发：剥离目标站的 iframe 嵌入限制响应头、改写 Origin/Referer
+// 通过目标站 CSRF 校验；配置了认证的页面还会自动注入认证头
 // 支持三种认证模式：
 //   basic  - 注入 Authorization: Basic 头（Nginx basic auth 类站点）
 //   header - 注入自定义请求头（如 Grafana Service Account 的 Bearer 令牌）
@@ -334,25 +373,30 @@ app.delete('/api/groups/:name', (req, res) => {
 const sessionCache = new Map();
 
 // ---------- 嵌入路径重写 ----------
-// 目标站（如 Grafana）的 HTML 中静态资源多为绝对路径（/public/build/xxx.js），
-// 经 /proxy/<id>/ 前缀嵌入时浏览器会向本服务器根路径请求这些资源而跳过代理，
-// 导致「failed to load its application files」。因此对 HTML/CSS 响应做 URL 重写：
-// 绝对路径 → 代理前缀路径，并把 Grafana 的 appSubUrl 注入为代理前缀，
-// 使其运行时 API 调用 / 路由 / 懒加载资源也全部走代理
-
+// 两种代理模式：
+//   恒等映射（默认）：代理路径即目标路径，目标 HTML 中的绝对路径（/xxl-job-admin/static/... 等）
+//   浏览器向本服务器请求时天然走代理，无需拼前缀（拼前缀会导致路径重复而 404）；
+//   不在已注册前缀下的路径（如 Grafana 的 /public/、/api/）由 Referer 兜底转发处理
+//   挂载（/hilbert-proxy/<id>，页面配置 proxyMode=mount）：用于根路径站点（如 https://notes.abel.ai/，
+//   其目标路径与面板根路径冲突）或恒等映射异常的站点，需把 HTML/CSS 中的绝对路径
+//   全部重写到挂载前缀下
 function rewriteHtml(html, prefix, appUrl) {
-  return html
-    // 让目标站前端在运行时以代理前缀拼接所有 URL（Grafana bootData）；
-    // 保留原有子路径（子目录部署时原值非空，拼接后资源/API 路径才完整）
-    .replace(/"appSubUrl":"([^"]*)"/, `"appSubUrl":"${prefix}$1"`)
+  let out = html
     // appUrl 改为代理的绝对地址，避免目标站构造的绝对链接指回其自身域名
-    .replace(/"appUrl":"[^"]*"/, `"appUrl":"${appUrl}"`)
-    // 标签属性中的站内绝对路径：href="/xxx" → href="<prefix>/xxx"
-    .replace(/((?:href|src|content|action|poster)\s*=\s*["'])\//g, '$1' + prefix + '/')
-    // 内联脚本中的 /public 绝对路径赋值（如 __grafana_public_path__）
-    .replaceAll('"/public/', `"${prefix}/public/`);
+    .replace(/"appUrl":"[^"]*"/, `"appUrl":"${appUrl}"`);
+  if (prefix) {
+    out = out
+      // 让目标站前端在运行时以挂载前缀拼接所有 URL（Grafana bootData）
+      .replace(/"appSubUrl":"([^"]*)"/, `"appSubUrl":"${prefix}$1"`)
+      // 标签属性中的站内绝对路径：href="/xxx" → href="<prefix>/xxx"
+      .replace(/((?:href|src|content|action|poster)\s*=\s*["'])\//g, '$1' + prefix + '/')
+      // 内联脚本中的 /public 绝对路径赋值（如 __grafana_public_path__）
+      .replaceAll('"/public/', `"${prefix}/public/`);
+  }
+  return out;
 }
 
+// 仅挂载模式：CSS 内 url(...) 绝对路径重写为挂载前缀
 function rewriteCss(css, prefix) {
   return css.replace(/url\(\s*(["']?)\//g, 'url($1' + prefix + '/');
 }
@@ -361,22 +405,37 @@ function rewriteCss(css, prefix) {
 function performLogin(page, base) {
   return new Promise((resolve, reject) => {
     const lib = base.protocol === 'https:' ? https : http;
-    const body = JSON.stringify({ user: page.auth.username, password: page.auth.password });
-    const loginReq = lib.request(base.origin + page.auth.loginPath, {
+    const auth = page.auth;
+    // 按配置选择请求体格式：json（如 Grafana {user, password}）/ form 表单编码
+    //（如 XXL-JOB 的 @RequestParam userName/password，不解析 JSON 请求体）
+    const credentials = { [auth.userField]: auth.username, [auth.passwordField]: auth.password };
+    const body = auth.loginFormat === 'form'
+      ? new URLSearchParams(credentials).toString()
+      : JSON.stringify(credentials);
+    const contentType = auth.loginFormat === 'form'
+      ? 'application/x-www-form-urlencoded'
+      : 'application/json';
+    const loginReq = lib.request(base.origin + auth.loginPath, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
         'Content-Length': Buffer.byteLength(body),
         'Accept': 'application/json'
       }
     }, loginRes => {
       const setCookies = loginRes.headers['set-cookie'] || [];
-      loginRes.resume(); // 排空响应体
-      if (loginRes.statusCode >= 200 && loginRes.statusCode < 300 && setCookies.length) {
-        resolve(setCookies.map(c => c.split(';')[0]).join('; '));
-      } else {
-        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})，请检查账号密码或登录路径`));
-      }
+      const chunks = [];
+      loginRes.on('data', c => chunks.push(c));
+      loginRes.on('end', () => {
+        if (loginRes.statusCode >= 200 && loginRes.statusCode < 300 && setCookies.length) {
+          resolve(setCookies.map(c => c.split(';')[0]).join('; '));
+          return;
+        }
+        // 附带目标站返回体片段，便于排查（如 XXL-JOB 登录失败也返回 200 + JSON 错误信息）
+        const detail = Buffer.concat(chunks).toString('utf8').slice(0, 200);
+        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})${detail ? ': ' + detail : ''}，请检查账号密码、登录路径与请求格式`));
+      });
+      loginRes.on('error', reject);
     });
     loginReq.on('error', reject);
     loginReq.end(body);
@@ -384,20 +443,20 @@ function performLogin(page, base) {
 }
 
 // 计算代理请求的实际目标地址（HTTP 转发与 WebSocket upgrade 共用）
-// 路径模型：代理前缀后的子路径一律按目标站根路径解析——HTML 的 <base href>
-// 与 appSubUrl 重写后，浏览器发来的请求已携带完整站内路径（含子目录部署场景）。
-// 唯一例外是文件式 URL（如 /datamap.html）：子资源按文件所在目录解析，
-// 与浏览器相对路径行为一致
-function resolveProxyTarget(page, originalUrl) {
+// stripPrefix: 需剥离的挂载前缀。恒等映射（默认路由与 Referer 兜底）传 ''，目标路径即请求路径；
+// 挂载模式（proxyMode=mount 页面的 /hilbert-proxy/<id>）剥离挂载前缀后转发
+function resolveProxyTarget(page, originalUrl, stripPrefix = '') {
   const base = new URL(page.url);
   const basePath = base.pathname.replace(/\/+$/, '');
-  const prefix = '/proxy/' + page.id;
 
   const fileLike = /\/[^/]*\.[^/]*$/.test(basePath);
-  const subBase = fileLike ? (basePath.slice(0, basePath.lastIndexOf('/')) || '/') : '';
 
-  // 代理路径后的子路径 + 查询串（合并页面 URL 自带的查询参数，同名参数去重）
-  let rest = originalUrl.slice(prefix.length);
+  // 挂载前缀后的子路径 + 查询串（合并页面 URL 自带的查询参数，同名参数去重）
+  // 挂载模式请求路径正常带挂载前缀；Referer 兜底的逃逸资源不带前缀，此时不剥离，
+  // 请求路径即目标路径
+  let rest = stripPrefix && originalUrl.startsWith(stripPrefix)
+    ? originalUrl.slice(stripPrefix.length)
+    : originalUrl;
   if (!rest.startsWith('/')) rest = '/' + rest;
   const qIdx = rest.indexOf('?');
   const restPath = qIdx === -1 ? rest : rest.slice(0, qIdx);
@@ -406,11 +465,21 @@ function resolveProxyTarget(page, originalUrl) {
     ...base.search.replace(/^\?/, '').split('&'),
     ...restQuery.split('&')
   ].filter(Boolean))].join('&');
-  const targetPath = restPath === '/'
-    ? (basePath || '/')
-    : (!subBase || subBase === '/' ? restPath : subBase + restPath);
+  
+  let targetPath;
+  if (stripPrefix) {
+    // 挂载模式：目标路径 = 请求路径剥离挂载前缀（根请求取页面 URL 路径）
+    targetPath = restPath === '/' ? (basePath || '/') : restPath;
+  } else if (restPath === '/') {
+    // 根请求：取页面 URL 路径
+    targetPath = basePath || '/';
+  } else {
+    // 恒等映射：目标路径 = 请求路径
+    targetPath = restPath;
+  }
+  
   return {
-    base, subBase, prefix, restPath, basePath, fileLike, query,
+    base, basePath, fileLike, restPath, query,
     target: base.origin + targetPath + (query ? '?' + query : '')
   };
 }
@@ -435,32 +504,106 @@ async function applyAuthHeaders(page, headers) {
   }
 }
 
-app.use('/proxy/:pageId', (req, res) => {
-  const page = readPages().find(p => p.id === req.params.pageId);
-  if (!page || page.type !== 'link') {
-    return res.status(404).send('页面不存在或非链接页面');
-  }
-  handleProxyRequest(page, req, res);
-});
+// ---------- 动态代理路由注册 ----------
+// 根据页面配置动态注册代理路由，使用页面 URL 的路径作为代理入口
+// 例：页面 URL 为 https://xxl-job.example.com/xxl-job-admin/，则代理路径为 /xxl-job-admin/
 
-// 代理转发主体：/proxy/:pageId 路由与根路径兜底转发共用
-// （overrideUrl 为兜底场景下拼回前缀后的等价请求路径）
-function handleProxyRequest(page, req, res, overrideUrl) {
-  const resolved = resolveProxyTarget(page, overrideUrl || req.originalUrl);
-  const { base, subBase, prefix, target } = resolved;
+// 存储已注册的代理路由，用于 WebSocket upgrade 与 Referer 兜底时查找页面
+const proxyRoutes = new Map(); // pathPrefix -> { page, mount }（mount=true 为挂载路由）
+
+function registerProxyRoutes() {
+  proxyRoutes.clear();
+  
+  const pages = readPages().filter(p => p.type === 'link');
+  const routesToRegister = [];
+  
+  for (const page of pages) {
+    try {
+      const url = new URL(page.url);
+      const fullPath = url.pathname.replace(/\/+$/, '');
+
+      // 挂载模式（编辑页面手动指定 proxyMode=mount）：统一从 /hilbert-proxy/<id> 进入，
+      // 适用于根路径站点（与面板根路径冲突无法恒等映射）或恒等映射异常的站点
+      if (page.proxyMode === 'mount') {
+        const mountPath = '/hilbert-proxy/' + page.id;
+        routesToRegister.push({ path: mountPath, page, mount: true, priority: mountPath.length });
+        continue;
+      }
+
+      if (!fullPath) continue;
+      
+      // 提取所有可能的前缀路径
+      // 例如：/xxl-job-admin/jobinfo -> [/xxl-job-admin, /xxl-job-admin/jobinfo]
+      const segments = fullPath.split('/').filter(Boolean);
+      const prefixes = [];
+      let currentPath = '';
+      for (const seg of segments) {
+        currentPath += '/' + seg;
+        prefixes.push(currentPath);
+      }
+      
+      for (const prefix of prefixes) {
+        routesToRegister.push({ path: prefix, page, mount: false, priority: prefix.length });
+      }
+    } catch { /* 无效 URL 忽略 */ }
+  }
+  
+  // 按优先级排序（路径越长优先级越高）
+  routesToRegister.sort((a, b) => b.priority - a.priority);
+  
+  // 注册路由（去重，同一路径只注册一次）
+  const registeredPaths = new Set();
+  for (const { path, page, mount } of routesToRegister) {
+    if (registeredPaths.has(path)) continue;
+    registeredPaths.add(path);
+    
+    proxyRoutes.set(path, { page, mount });
+    
+    app.use(path, (req, res, next) => {
+      const currentPage = readPages().find(p => p.id === page.id && p.type === 'link');
+      // 页面被删除，或代理模式已变更时放行：重注册会压入新路由，
+      // 旧路由的中间件仍在栈中，靠模式一致性校验避免陈旧路由接管请求
+      if (!currentPage || (currentPage.proxyMode === 'mount') !== mount) return next();
+      handleProxyRequest(currentPage, req, res, mount ? null : path, mount ? path : undefined);
+    });
+  }
+}
+
+// 页面变更时重新注册（通过代理 writePages）
+const originalWritePages = writePages;
+writePages = function(pages) {
+  originalWritePages(pages);
+  registerProxyRoutes();
+};
+
+// 代理转发主体
+// matchedPath: 实际匹配的恒等路由路径（恒等映射时目标路径 = 请求路径）
+// mountPrefix: 挂载模式页面的挂载路径（/hilbert-proxy/<id>），转发时剥离挂载前缀，并重写 HTML/CSS 绝对路径
+function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
+  const resolved = resolveProxyTarget(page, req.originalUrl, mountPrefix || '');
+  const { base, target } = resolved;
+  // 重写前缀：挂载模式把绝对路径重写为挂载前缀；恒等映射无需重写
+  const rewritePrefix = mountPrefix || '';
 
   // 页面 URL 指向深层路径（如 Grafana 仪表盘 /d/xxx，属 SPA 路由而非目录）时，
-  // 根请求先跳转到前缀 + 页面路径，让目标站前端路由看到正确入口；
+  // 对「代理入口根」的请求先跳转到页面 URL 路径，让目标站前端路由看到正确入口；
   // 文件式 URL 除外（根请求直接返回文件本身，相对资源按文件目录解析）
-  if (resolved.restPath === '/' && resolved.basePath && !resolved.fileLike) {
-    return res.redirect(302, prefix + resolved.basePath
+  // 仅当匹配路径短于页面 URL 路径时才重定向，避免无限循环
+  const reqPath = req.originalUrl.split('?')[0];
+  const atEntryRoot = !mountPrefix && (matchedPath
+    ? (reqPath === matchedPath || reqPath === matchedPath + '/')
+    : resolved.restPath === '/');
+  if (atEntryRoot && resolved.basePath && !resolved.fileLike &&
+    (!matchedPath || matchedPath.length < resolved.basePath.length)) {
+    // 重定向到页面 URL 路径（basePath）
+    return res.redirect(302, resolved.basePath
       + (resolved.query ? '?' + resolved.query : ''));
   }
 
   const auth = page.auth;
   const lib = base.protocol === 'https:' ? https : http;
-  // HTML 重写时把 appUrl 改为代理的绝对地址
-  const appUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host + prefix + '/';
+  // HTML 重写时把 appUrl 改为代理的绝对地址（挂载模式拼挂载前缀）
+  const appUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host + rewritePrefix + '/';
 
   // 先缓存请求体：login 模式会话过期重试时需要重发
   const chunks = [];
@@ -481,13 +624,17 @@ function handleProxyRequest(page, req, res, overrideUrl) {
       headers.origin = base.origin;
       headers.referer = base.origin + '/';
       delete headers['transfer-encoding']; // 请求体已缓存，统一按 content-length 发送
-      delete headers['accept-encoding']; // 要求不压缩，便于对 HTML/CSS 做文本重写
+      // 压缩协商：只声明本服务能解压的编码（浏览器可能额外发送 zstd 等，
+      // HTML/CSS 重写遇到无法解压的编码会输出损坏内容）；JS/API 等非重写
+      // 响应仍会返回压缩数据并原样透传，减少传输量
+      headers['accept-encoding'] = 'gzip, deflate, br';
       headers['content-length'] = bodyBuf.length;
 
       await applyAuthHeaders(page, headers);
 
       await new Promise((resolve, reject) => {
-        const proxyReq = lib.request(target, { method: req.method, headers }, proxyRes => {
+        const agent = base.protocol === 'https:' ? httpsAgent : httpAgent;
+        const proxyReq = lib.request(target, { method: req.method, headers, agent }, proxyRes => {
           // login 模式会话过期检测：401 或被重定向到登录页 → 重新登录后重试一次
           const expired = auth && auth.mode === 'login' && !isRetry && (
             proxyRes.statusCode === 401 ||
@@ -505,38 +652,48 @@ function handleProxyRequest(page, req, res, overrideUrl) {
           delete resHeaders['x-frame-options'];
           delete resHeaders['content-security-policy'];
           delete resHeaders['content-security-policy-report-only'];
-          // 把指向目标站的跳转重写回代理路径，避免跳出后丢失认证
+          // 把指向目标站的跳转重写为本服务器同路径，避免跳出后丢失认证
+          //（恒等映射保持原路径；挂载模式拼挂载前缀）
           if (resHeaders.location) {
             try {
               const loc = new URL(resHeaders.location, base.origin);
-              if (loc.origin === base.origin && loc.pathname.startsWith(subBase || '/')) {
-                const sub = subBase && subBase !== '/' ? loc.pathname.slice(subBase.length) : loc.pathname;
-                // 与普通请求保持一致：合并页面 URL 自带的查询参数
-                const mergedQuery = [base.search.replace(/^\?/, ''), loc.search.replace(/^\?/, '')]
-                  .filter(Boolean).join('&');
-                resHeaders.location = prefix + (sub.startsWith('/') ? sub : '/' + sub)
-                  + (mergedQuery ? '?' + mergedQuery : '');
+              if (loc.origin === base.origin) {
+                resHeaders.location = rewritePrefix + loc.pathname + loc.search;
               }
             } catch { /* 非法 Location 保持原样 */ }
           }
 
           const contentType = String(resHeaders['content-type'] || '');
           const isHtml = /text\/html/.test(contentType);
-          const rewrite = isHtml ? rewriteHtml : /text\/css/.test(contentType) ? rewriteCss : null;
+          // 恒等映射只重写 HTML 中的 appUrl；挂载模式还需重写 HTML/CSS 绝对路径为挂载前缀
+          const rewrite = isHtml ? rewriteHtml : (rewritePrefix && /text\/css/.test(contentType)) ? rewriteCss : null;
           if (!rewrite) {
+            // 无需重写（JS/CSS/图片/API 数据等）：压缩响应原样透传，不解压，节省传输
             res.writeHead(proxyRes.statusCode, resHeaders);
             proxyRes.pipe(res);
             proxyRes.on('end', resolve);
             proxyRes.on('error', reject);
             return;
           }
-          // HTML/CSS：缓冲后重写绝对路径，再修正长度返回
+          // HTML(/CSS) 需文本重写：若目标站返回压缩响应，先解压再重写，最后按未压缩返回
+          const encoding = String(resHeaders['content-encoding'] || '').toLowerCase();
+          // 未知编码（如 zstd）无法解压重写，直接报错，避免输出损坏内容
+          if (encoding && !/gzip|deflate|br/.test(encoding)) {
+            proxyRes.resume();
+            return reject(new Error(`目标站返回了无法解压的编码: ${encoding}`));
+          }
+          let src = proxyRes;
+          if (encoding.includes('br')) {
+            src = proxyRes.pipe(zlib.createBrotliDecompress());
+          } else if (encoding.includes('gzip') || encoding.includes('deflate')) {
+            src = proxyRes.pipe(zlib.createUnzip());
+          }
           const bufs = [];
-          proxyRes.on('data', c => bufs.push(c));
-          proxyRes.on('end', () => {
+          src.on('data', c => bufs.push(c));
+          src.on('end', () => {
             const rewritten = isHtml
-              ? rewriteHtml(Buffer.concat(bufs).toString('utf8'), prefix, appUrl)
-              : rewriteCss(Buffer.concat(bufs).toString('utf8'), prefix);
+              ? rewriteHtml(Buffer.concat(bufs).toString('utf8'), rewritePrefix, appUrl)
+              : rewriteCss(Buffer.concat(bufs).toString('utf8'), rewritePrefix);
             delete resHeaders['content-length'];
             delete resHeaders['content-encoding'];
             delete resHeaders['transfer-encoding'];
@@ -545,6 +702,7 @@ function handleProxyRequest(page, req, res, overrideUrl) {
             res.end(rewritten);
             resolve();
           });
+          src.on('error', reject);
           proxyRes.on('error', reject);
         });
         proxyReq.on('error', reject);
@@ -554,19 +712,71 @@ function handleProxyRequest(page, req, res, overrideUrl) {
   });
 }
 
-// 兜底转发：目标站运行时可能生成不走 appSubUrl 的根路径地址
-//（如 Grafana 的 /avatar/<hash>），浏览器会直接请求本服务根路径而跳过代理前缀。
-// 同源 iframe 的 Referer 携带完整路径，据此识别来源代理页面，
-// 把根路径请求转发到对应目标站，避免 404
+
+
+// 按 Referer 识别来源页面（HTTP 兜底与 WebSocket upgrade 共用）：
+// 目标站资源不一定落在已注册代理前缀下（如 Grafana 前端运行时动态注入的
+// /avatar/...）。返回 { page, mountPrefix }：
+//   ① Referer 路径按已注册代理路由前缀做最长匹配：恒等路由命中按原路径转发；
+//      挂载路由命中时带挂载前缀——挂载页面的 HTML/CSS 重写覆盖不到 JS 运行时
+//      动态插入的绝对路径资源，这类请求会以原路径逃逸到本服务器
+//   ② 未命中再按 Referer origin 匹配页面目标 URL 的 origin（如页面经站内跳转
+//      到了未注册的路径），仅恒等映射页面适用
+function findPageByReferer(referer) {
+  let refUrl;
+  try {
+    refUrl = new URL(referer);
+  } catch {
+    return null; // 非法 Referer 忽略
+  }
+  // ① 已注册代理路由前缀最长匹配（跳过模式已变更的陈旧条目）
+  let page = null;
+  let mountPrefix = null;
+  let bestLen = 0;
+  for (const [pathPrefix, entry] of proxyRoutes) {
+    if ((entry.page.proxyMode === 'mount') !== entry.mount) continue;
+    if ((refUrl.pathname === pathPrefix || refUrl.pathname.startsWith(pathPrefix + '/')) &&
+        pathPrefix.length > bestLen) {
+      page = entry.page;
+      bestLen = pathPrefix.length;
+      mountPrefix = entry.mount ? pathPrefix : null;
+    }
+  }
+  if (page) return { page, mountPrefix };
+  // ② 目标站 origin 匹配：面板自身 origin（恒等映射页面 URL 无路径时与目标
+  // origin 相同）不参与，避免把面板请求误转发给目标站
+  const refOrigin = refUrl.origin;
+  let best = null;
+  for (const p of readPages()) {
+    if (p.type !== 'link' || p.proxyMode === 'mount') continue;
+    let target;
+    try {
+      target = new URL(p.url);
+    } catch {
+      continue;
+    }
+    if (target.origin === refOrigin) {
+      if (!best || target.pathname.length > new URL(best.url).pathname.length) best = p;
+    }
+  }
+  return best ? { page: best, mountPrefix: null } : null;
+}
+
+// ---------- Referer 兜底转发 ----------
+// 新架构代理路径即目标路径，但目标站的资源可能不在已注册前缀之下
+//（如 Grafana 的 /public/build/xxx.js、/api/...、/avatar/...）。此类请求通过
+// Referer 识别来源页面后转发（规则见 findPageByReferer）
 app.use((req, res, next) => {
-  const referer = req.headers.referer;
-  if (!referer) return next();
-  let match = null;
-  try { match = new URL(referer).pathname.match(/^\/proxy\/([^/]+)/); } catch { /* 非法 Referer 忽略 */ }
-  if (!match) return next();
-  const page = readPages().find(p => p.id === match[1]);
-  if (!page || page.type !== 'link') return next();
-  handleProxyRequest(page, req, res, '/proxy/' + page.id + req.url);
+  const reqPath = req.url.split('?')[0];
+  // 管理 API 不参与兜底；命中已注册代理前缀的请求交给动态路由处理
+  if (reqPath.startsWith('/hilbert-api')) return next();
+  for (const pathPrefix of proxyRoutes.keys()) {
+    if (reqPath === pathPrefix || reqPath.startsWith(pathPrefix + '/')) return next();
+  }
+  const found = findPageByReferer(req.headers.referer);
+  if (!found) return next();
+  // 恒等映射按原路径转发；挂载页面逃逸资源带挂载前缀（剥离/重写逻辑与挂载路由一致）
+  handleProxyRequest(found.page, req, res, '', found.mountPrefix || undefined);
 });
 
 // 启动时把旧版内联的 Markdown 内容迁移为独立文件
@@ -583,32 +793,56 @@ function migrateInlineMarkdown() {
 }
 migrateInlineMarkdown();
 
-const server = app.listen(PORT, () => {
-  console.log(`后台已启动: http://localhost:${PORT}`);
+// 启动时注册代理路由（必须在所有函数定义之后）
+registerProxyRoutes();
+
+const server = app.listen(PORT, HOST, () => {
+  console.log(`后台已启动: http://${HOST}:${PORT}`);
 });
 
 // ---------- WebSocket 转发（Grafana live 等实时通道） ----------
 // Express 中间件不处理 upgrade 请求，需在 HTTP server 层接管并双向管道透传
 server.on('upgrade', async (req, socket, head) => {
-  let match = req.url.match(/^\/proxy\/([^/]+)/);
-  let page = match && readPages().find(p => p.id === match[1]);
-  // 兜底：同 HTTP 转发，根路径 upgrade 按 Referer 识别来源代理页面
-  let urlOverride = null;
-  if (!page && req.headers.referer) {
-    try { match = new URL(req.headers.referer).pathname.match(/^\/proxy\/([^/]+)/); } catch { match = null; }
-    page = match && readPages().find(p => p.id === match[1]);
-    if (page) urlOverride = '/proxy/' + page.id + req.url;
+  // 通过请求路径匹配代理页面（新架构：代理路径即页面 URL 路径）
+  const reqPath = req.url.split('?')[0];
+  let page = null;
+  let matchedPath = null;
+  
+  // 查找匹配的代理路由（最长前缀匹配）；跳过模式已变更的陈旧路由
+  let mountPrefix;
+  for (const [pathPrefix, entry] of proxyRoutes) {
+    if ((entry.page.proxyMode === 'mount') !== entry.mount) continue; // 跳过陈旧条目
+    if (reqPath === pathPrefix || reqPath.startsWith(pathPrefix + '/')) {
+      if (!matchedPath || pathPrefix.length > matchedPath.length) {
+        page = entry.page;
+        matchedPath = pathPrefix;
+        mountPrefix = entry.mount ? pathPrefix : undefined;
+      }
+    }
   }
+
+  // 未命中时通过 Referer 识别来源页面转发（规则见 findPageByReferer）
+  //（如 Grafana live 的 /api/live/ws 不在已注册前缀下）
+  if (!page && req.headers.referer) {
+    const found = findPageByReferer(req.headers.referer);
+    if (found) {
+      page = found.page;
+      mountPrefix = found.mountPrefix || undefined;
+      matchedPath = ''; // 按原路径转发
+    }
+  }
+
   if (!page || page.type !== 'link') {
     socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
     socket.destroy();
     return;
   }
+  
   try {
-    const { base, target } = resolveProxyTarget(page, urlOverride || req.url);
+    const { base, target } = resolveProxyTarget(page, req.url, mountPrefix || '');
     const headers = { ...req.headers };
     delete headers.host;
-    headers.origin = base.origin; // 同 HTTP 转发：改写为目标站域名，通过 CSRF 校验
+    headers.origin = base.origin; // 改写为目标站域名，通过 CSRF 校验
     headers.referer = base.origin + '/';
     await applyAuthHeaders(page, headers);
 

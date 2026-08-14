@@ -14,9 +14,10 @@
   - `header`：注入任意自定义请求头（如 Bearer 令牌）
 - **深度代理适配**（以 Grafana 为例已验证）
   - 剥离 `X-Frame-Options` / CSP 使目标站可被 iframe 嵌入
-  - HTML/CSS 绝对路径重写 + `appSubUrl` 注入，支持深层路由（仪表盘 URL）与子目录部署
   - Origin/Referer 改写绕过 CSRF 校验、WebSocket 双向透传（Grafana live）
-  - 根路径逃逸请求按 Referer 兜底转发（如 `/avatar/<hash>`）
+  - 两种代理模式（编辑页面可选）：
+    - **恒等映射**（默认）：代理路径直接使用目标页面 URL 路径（如 `/xxl-job-admin/`），绝对路径无需重写
+    - **挂载** `/hilbert-proxy/<页面id>`：适用于 URL 无路径的根路径站点（与面板根路径冲突）或恒等映射异常的站点，自动做 HTML/CSS 绝对路径重写 + `appSubUrl` 注入
 
 ## 技术栈
 
@@ -46,7 +47,7 @@ docker run -d --name hilbert-demo \
 ```
 
 - `-v ...:/app/data`：持久化页面/分组配置与 Markdown 文档，**必须挂载**，否则容器重建后数据丢失
-- 健康检查：镜像内置 `HEALTHCHECK`，探测 `GET /api/health`；K8s 探针同理
+- 健康检查：镜像内置 `HEALTHCHECK`，探测 `GET /hilbert-api/health`；K8s 探针同理
 - 镜像以非 root 用户运行
 
 K8s Deployment 片段示例：
@@ -61,7 +62,7 @@ containers:
       - name: data
         mountPath: /app/data
     readinessProbe:
-      httpGet: { path: /api/health, port: 3000 }
+      httpGet: { path: /hilbert-api/health, port: 3000 }
 volumes:
   - name: data
     persistentVolumeClaim:
@@ -84,15 +85,16 @@ volumes:
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/pages` | 页面列表 |
-| POST | `/api/pages` | 新建页面（markdown 自动生成占位文档） |
-| PUT | `/api/pages/:id` | 更新页面 |
-| DELETE | `/api/pages/:id` | 删除页面（连带 md 文件） |
-| GET | `/api/groups` | 分组列表 |
-| POST | `/api/groups` | 新建分组 |
-| DELETE | `/api/groups/:name` | 删除分组 |
-| GET | `/api/health` | 健康检查 |
-| ANY | `/proxy/:pageId/**` | 反向代理（自动认证 + 路径/HTML 重写） |
+| GET | `/hilbert-api/pages` | 页面列表 |
+| POST | `/hilbert-api/pages` | 新建页面（markdown 自动生成占位文档） |
+| PUT | `/hilbert-api/pages/:id` | 更新页面 |
+| DELETE | `/hilbert-api/pages/:id` | 删除页面（连带 md 文件） |
+| GET | `/hilbert-api/groups` | 分组列表 |
+| POST | `/hilbert-api/groups` | 新建分组 |
+| DELETE | `/hilbert-api/groups/:name` | 删除分组 |
+| GET | `/hilbert-api/health` | 健康检查 |
+| ANY | `/<页面URL路径>/**` | 反向代理（恒等映射，自动认证） |
+| ANY | `/hilbert-proxy/<页面id>/**` | 挂载模式页面的代理（前缀剥离 + HTML/CSS 重写） |
 
 ## 版本
 

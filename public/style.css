@@ -188,7 +188,43 @@ body {
   color: var(--text-primary);
 }
 
-.item-actions button.del:hover { color: var(--danger); }
+/* 菜单展开时保持三点按钮可见（鼠标移出条目也不消失） */
+.page-item.menu-open .item-actions { display: flex; }
+
+/* 页面项三点下拉菜单 */
+.item-menu {
+  display: none;
+  position: fixed; /* top/right 由 JS 按按钮坐标设置 */
+  z-index: 60;
+  min-width: 100px;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--active-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.item-menu.open { display: flex; }
+
+.item-menu button {
+  background: transparent;
+  border: none;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.item-menu button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.item-menu button.danger:hover { color: var(--danger); }
 
 /* 设置入口（侧边栏底部） */
 
@@ -209,6 +245,25 @@ body {
 
 .settings-entry:hover {
   background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+/* 设置入口行：文字左侧、刷新图标右侧，共享悬停背景 */
+.settings-entry { gap: 9px; }
+.settings-entry .settings-spacer { flex: 1; }
+.settings-entry .refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.settings-entry .refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
 }
 
@@ -569,6 +624,12 @@ body {
   gap: 10px;
 }
 
+.auth-login-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .auth-inputs input,
 .auth-login-path {
   flex: 1;
@@ -593,6 +654,7 @@ body {
   line-height: 1.5;
   margin-top: 8px;
 }
+.form-hint.warn { color: #f0b429; }
 
 /* ================= 按钮 ================= */
 

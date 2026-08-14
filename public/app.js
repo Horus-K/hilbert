@@ -549,9 +549,14 @@ function renderPermTable(role) {
   const oldHint = $('rbacPermAllHint');
   if (oldHint) oldHint.remove();
   const rolePerms = role ? (role.permissions || []) : [];
-  // 检查是否已有通配权限
-  const wildcardPerm = rolePerms.find(p => p.pageId === '*');
+  // 检查是否已有通配权限（排除仅含 create 的条目）
+  const wildcardPerm = rolePerms.find(p => p.pageId === '*' && p.actions.some(a => a !== 'create'));
   $('rbacPermAll').checked = !!wildcardPerm;
+  // 设置独立「新增页面」开关状态
+  const hasCreate = wildcardPerm
+    ? wildcardPerm.actions.includes('create')
+    : rolePerms.some(p => p.actions && p.actions.includes('create'));
+  $('rbacPermCreate').checked = hasCreate;
   // 获取所有页面（包括无 read 权限的，管理员才能配置）
   const allPages = pages;
   if (allPages.length === 0) {
@@ -561,7 +566,7 @@ function renderPermTable(role) {
   // 表头
   const header = document.createElement('div');
   header.className = 'rbac-perm-row rbac-perm-header';
-  header.innerHTML = '<span class="rbac-perm-page">页面</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act-head" data-act="read" /> 查看</label><label><input type="checkbox" class="perm-act-head" data-act="create" /> 新增</label><label><input type="checkbox" class="perm-act-head" data-act="update" /> 修改</label><label><input type="checkbox" class="perm-act-head" data-act="delete" /> 删除</label></span>';
+  header.innerHTML = '<span class="rbac-perm-page">页面</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act-head" data-act="read" /> 查看</label><label><input type="checkbox" class="perm-act-head" data-act="update" /> 修改</label><label><input type="checkbox" class="perm-act-head" data-act="delete" /> 删除</label></span>';
   container.appendChild(header);
   // 表头 checkbox 事件：全选/全不选该列
   header.querySelectorAll('.perm-act-head').forEach(cb => {
@@ -578,7 +583,7 @@ function renderPermTable(role) {
     const row = document.createElement('div');
     row.className = 'rbac-perm-row';
     row.dataset.pageId = p.id;
-    row.innerHTML = `<span class="rbac-perm-page" title="${escapeHtml(p.name)}">${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act" data-act="read" ${actions.includes('read') ? 'checked' : ''} /> 查看</label><label><input type="checkbox" class="perm-act" data-act="create" ${actions.includes('create') ? 'checked' : ''} /> 新增</label><label><input type="checkbox" class="perm-act" data-act="update" ${actions.includes('update') ? 'checked' : ''} /> 修改</label><label><input type="checkbox" class="perm-act" data-act="delete" ${actions.includes('delete') ? 'checked' : ''} /> 删除</label></span>`;
+    row.innerHTML = `<span class="rbac-perm-page" title="${escapeHtml(p.name)}">${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act" data-act="read" ${actions.includes('read') ? 'checked' : ''} /> 查看</label><label><input type="checkbox" class="perm-act" data-act="update" ${actions.includes('update') ? 'checked' : ''} /> 修改</label><label><input type="checkbox" class="perm-act" data-act="delete" ${actions.includes('delete') ? 'checked' : ''} /> 删除</label></span>`;
     // 通配模式下禁用行 checkbox
     if (isAllMode) {
       row.querySelectorAll('.perm-act').forEach(cb => { cb.checked = true; cb.disabled = true; });
@@ -590,7 +595,7 @@ function renderPermTable(role) {
     const hint = document.createElement('p');
     hint.id = 'rbacPermAllHint';
     hint.className = 'rbac-perm-all-hint';
-    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的权限';
+    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的查看、修改、删除权限';
     container.parentNode.insertBefore(hint, container.nextSibling);
   }
 }
@@ -599,14 +604,14 @@ function collectPermFromTable() {
   const isAll = $('rbacPermAll').checked;
   const permissions = [];
   if (isAll) {
-    // 通配权限：从表头 checkbox 收集
+    // 通配权限：从表头 checkbox 收集（仅 read/update/delete）
     const actions = [];
     $('rbacPermTable').querySelectorAll('.perm-act-head').forEach(cb => {
       if (cb.checked) actions.push(cb.dataset.act);
     });
     if (actions.length > 0) permissions.push({ pageId: '*', actions });
   } else {
-    // 逐页收集
+    // 逐页收集（仅 read/update/delete）
     $('rbacPermTable').querySelectorAll('.rbac-perm-row[data-page-id]').forEach(row => {
       const actions = [];
       row.querySelectorAll('.perm-act').forEach(cb => {
@@ -616,6 +621,10 @@ function collectPermFromTable() {
         permissions.push({ pageId: row.dataset.pageId, actions });
       }
     });
+  }
+  // 独立的「新增页面」权限（全局，不绑定具体页面）
+  if ($('rbacPermCreate').checked) {
+    permissions.push({ pageId: '*', actions: ['create'] });
   }
   return permissions;
 }
@@ -730,7 +739,7 @@ $('rbacPermAll').addEventListener('change', () => {
     hint = document.createElement('p');
     hint.id = 'rbacPermAllHint';
     hint.className = 'rbac-perm-all-hint';
-    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的权限';
+    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的查看、修改、删除权限';
     $('rbacPermTable').parentNode.insertBefore(hint, $('rbacPermTable').nextSibling);
   } else if (!isAll && hint) {
     hint.remove();

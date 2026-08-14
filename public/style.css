@@ -1362,6 +1362,13 @@ body {
 /* 权限配置表格 */
 .rbac-perm-header {
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.rbac-perm-create-toggle {
+  margin-left: auto;
 }
 
 .rbac-perm-table {

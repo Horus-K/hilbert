@@ -285,9 +285,10 @@
         </div>
         <div class="form-item">
           <label>页面权限</label>
-          <p class="form-hint">勾选每个页面对应的操作权限。勾选「全部页面」后，后续新增的页面也会自动继承所选权限。</p>
+          <p class="form-hint">勾选每个页面对应的查看、修改、删除权限。「新增页面」为独立的全局开关。</p>
           <div class="rbac-perm-header">
             <label class="checkbox-label"><input type="checkbox" id="rbacPermAll" /> 全部页面</label>
+            <label class="checkbox-label rbac-perm-create-toggle"><input type="checkbox" id="rbacPermCreate" /> 新增页面</label>
           </div>
           <div class="rbac-perm-table" id="rbacPermTable"><!-- 动态渲染 --></div>
         </div>

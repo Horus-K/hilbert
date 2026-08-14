@@ -4,9 +4,10 @@
 
 ## 功能特性
 
-- **两种页面类型**
+- **三种页面类型**
   - `link`：iframe 嵌入外部系统（Grafana、xxl-job、内部工具等）
   - `markdown`：内置 Markdown 文档，右侧原地编辑，正文以独立 `.md` 文件存储
+  - `custom`：自定义前端页面，上传 HTML/CSS/JS 等静态资源，后端独立静态目录托管（`/hilbert-custom/<页面id>/`）
 - **分组管理**：页面按分组归类，支持新建/删除分组
 - **反向代理自动认证**（核心能力，解决 iframe 无法携带认证的问题）
   - `basic`：自动注入 `Authorization: Basic` 头（适用于 Nginx basic auth 站点）
@@ -78,6 +79,7 @@ volumes:
 | `data/pages.json` | 页面配置（含认证信息） |
 | `data/groups.json` | 分组列表 |
 | `data/pages/*.md` | Markdown 页面正文（每页一个文件） |
+| `data/custom-pages/<id>/` | 自定义页面静态资源目录 |
 
 > ⚠️ 认证账号密码以明文保存在 `pages.json` 中，请通过文件系统权限控制访问，不要将该文件提交到仓库或外发。
 
@@ -92,10 +94,15 @@ volumes:
 | GET | `/hilbert-api/groups` | 分组列表 |
 | POST | `/hilbert-api/groups` | 新建分组 |
 | DELETE | `/hilbert-api/groups/:name` | 删除分组 |
+| POST | `/hilbert-api/pages/:id/upload` | 上传自定义页面文件（multipart，支持 zip） |
+| GET | `/hilbert-api/pages/:id/files` | 自定义页面文件列表 |
+| DELETE | `/hilbert-api/pages/:id/files/:filename` | 删除自定义页面文件 |
 | GET | `/hilbert-api/health` | 健康检查 |
+| GET | `/hilbert-api/version` | 版本号 |
 | ANY | `/<页面URL路径>/**` | 反向代理（恒等映射，自动认证） |
 | ANY | `/hilbert-proxy/<页面id>/**` | 挂载模式页面的代理（前缀剥离 + HTML/CSS 重写） |
+| GET | `/hilbert-custom/<页面id>/**` | 自定义页面静态资源服务 |
 
 ## 版本
 
-见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.0.0**。
+见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.1.0**。

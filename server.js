@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
+const multer = require('multer');
+const AdmZip = require('adm-zip');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,7 +21,7 @@ const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
 
 // 支持的页面类型：link = iframe 嵌入外部链接，markdown = 渲染 Markdown 文档
-const PAGE_TYPES = ['link', 'markdown'];
+const PAGE_TYPES = ['link', 'markdown', 'custom'];
 
 // 默认页面配置（首次启动时写入）
 const DEFAULT_PAGES = [
@@ -41,6 +43,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 健康检查：供容器编排（Docker HEALTHCHECK / K8s 探针）使用
 app.get('/hilbert-api/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// 版本号
+app.get('/hilbert-api/version', (req, res) => {
+  const pkg = require('./package.json');
+  res.json({ version: pkg.version });
 });
 
 // ---------- 配置文件读写 ----------
@@ -155,6 +163,132 @@ function deleteMdFile(content) {
   } catch { /* 文件已不存在则忽略 */ }
 }
 
+// ---------- 自定义页面静态资源存储 ----------
+// 每个 custom 页面分配独立目录 data/custom-pages/<pageId>/，存放 HTML/CSS/JS/图片等
+
+const CUSTOM_PAGES_DIR = path.join(DATA_DIR, 'custom-pages');
+const ALLOWED_EXTENSIONS = new Set([
+  '.html', '.htm', '.css', '.js', '.json', '.xml', '.svg',
+  '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.mp3', '.mp4', '.webm', '.ogg', '.wav', '.pdf'
+]);
+const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
+
+function customPageDir(pageId) {
+  return path.join(CUSTOM_PAGES_DIR, pageId);
+}
+
+function ensureCustomPageDir(pageId) {
+  const dir = customPageDir(pageId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function deleteCustomPageDir(pageId) {
+  const dir = customPageDir(pageId);
+  if (fs.existsSync(dir)) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  }
+}
+
+function copyDirSync(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) copyDirSync(srcPath, destPath);
+    else fs.copyFileSync(srcPath, destPath);
+  }
+}
+
+function isAllowedExtension(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return ALLOWED_EXTENSIONS.has(ext);
+}
+
+// multer 配置：内存存储 + 扩展名/大小校验
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (isAllowedExtension(file.originalname)) cb(null, true);
+    else cb(new Error('不支持的文件类型: ' + path.extname(file.originalname)));
+  },
+  limits: { fileSize: MAX_UPLOAD_SIZE }
+});
+
+// 处理文件上传（支持单文件或多文件 + zip 包解压）
+function handleCustomUpload(req, res) {
+  const pageId = req.params.id;
+  const pages = readPages();
+  const page = pages.find(p => p.id === pageId && p.type === 'custom');
+  if (!page) return res.status(404).json({ error: '自定义页面不存在' });
+
+  const targetDir = ensureCustomPageDir(pageId);
+  const uploadedFiles = [];
+
+  const processFile = (filename, buffer) => {
+    const safeName = path.basename(filename);
+    if (!isAllowedExtension(safeName)) return false;
+    fs.writeFileSync(path.join(targetDir, safeName), buffer);
+    uploadedFiles.push(safeName);
+    return true;
+  };
+
+  if (req.files && req.files.length) {
+    for (const file of req.files) {
+      if (file.originalname.toLowerCase().endsWith('.zip')) {
+        try {
+          const zip = new AdmZip(file.buffer);
+          for (const entry of zip.getEntries()) {
+            if (entry.isDirectory) continue;
+            const safeName = path.basename(entry.entryName);
+            if (!safeName || safeName.startsWith('.')) continue;
+            if (!isAllowedExtension(safeName)) continue;
+            const fullPath = path.join(targetDir, safeName);
+            if (!fullPath.startsWith(CUSTOM_PAGES_DIR + path.sep)) continue;
+            fs.writeFileSync(fullPath, entry.getData());
+            uploadedFiles.push(safeName);
+          }
+        } catch (e) {
+          return res.status(400).json({ error: 'zip 解压失败: ' + e.message });
+        }
+      } else {
+        processFile(file.originalname, file.buffer);
+      }
+    }
+  }
+
+  res.json({ uploaded: uploadedFiles });
+}
+
+// 自定义页面动态路由注册：为每个 custom 页面挂载 /hilbert-custom/<id> 静态托管
+const customRoutesMap = new Map(); // pageId -> express.static handler
+
+function registerCustomRoutes() {
+  customRoutesMap.clear();
+  const pages = readPages().filter(p => p.type === 'custom');
+  for (const page of pages) {
+    const dir = customPageDir(page.id);
+    if (fs.existsSync(dir)) {
+      customRoutesMap.set(page.id, express.static(dir, {
+        index: [page.entry || 'index.html']
+      }));
+    }
+  }
+}
+
+// /hilbert-custom/<pageId>/... 统一分发中间件（只注册一次，通过 Map 动态查找）
+function customPagesDispatcher(req, res, next) {
+  const match = req.path.match(/^\/([^/]+)(\/.*)?$/);
+  if (!match) return next();
+  const handler = customRoutesMap.get(match[1]);
+  if (!handler) return next();
+  req.url = match[2] || '/';
+  return handler(req, res, next);
+}
+
 // API 返回前：把路径引用回填为实际文本，前端逻辑保持不变
 function resolvePage(page) {
   if (page.type !== 'markdown' || !isContentPath(page.content)) return page;
@@ -189,7 +323,7 @@ app.post('/hilbert-api/pages', (req, res) => {
     id: crypto.randomUUID(),
     type,
     name: name.trim(),
-    icon: (icon || (type === 'markdown' ? '📝' : '🔗')).trim(),
+    icon: (icon || ({ markdown: '📝', custom: '🖥️' }[type] || '🔗')).trim(),
     group: (group || '未分组').trim()
   };
   if (type === 'link') {
@@ -201,6 +335,18 @@ app.post('/hilbert-api/pages', (req, res) => {
       return res.status(400).json({ error: '认证信息不完整' });
     }
     if (normalized) page.auth = normalized;
+  } else if (type === 'custom') {
+    // 自定义页面：创建资源目录 + 默认 index.html
+    ensureCustomPageDir(page.id);
+    page.entry = 'index.html';
+    // 复制来源页面的自定义目录（复制操作）
+    if (req.body.sourceId) {
+      const srcDir = customPageDir(req.body.sourceId);
+      if (fs.existsSync(srcDir)) copyDirSync(srcDir, customPageDir(page.id));
+    } else {
+      const defaultHtml = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head><meta charset="UTF-8"><title>新页面</title></head>\n<body>\n<h1>自定义页面</h1>\n<p>上传 HTML/CSS/JS 文件开始编辑。</p>\n</body>\n</html>';
+      fs.writeFileSync(path.join(customPageDir(page.id), 'index.html'), defaultHtml, 'utf8');
+    }
   } else {
     // Markdown 正文存入独立文件，pages.json 只记录路径；未传内容时生成占位文档
     const text = (content && content.trim())
@@ -246,7 +392,7 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
   }
   // 注意：content 不做直接赋值，markdown 页面的 content 字段保存的是文件路径，
   // 请求携带的文本统一在下方一致性校验中落盘
-  if (icon !== undefined) current.icon = icon.trim() || (current.type === 'markdown' ? '📝' : '🔗');
+  if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️' }[current.type] || '🔗');
   if (group !== undefined) current.group = (group || '未分组').trim();
 
   // 按最终类型做一致性校验，并清理不属于该类型的字段
@@ -255,19 +401,33 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
     deleteMdFile(current.content); // 类型切换为 link 时清理旧 md 文件
     delete current.content;
   } else {
-    delete current.auth; // markdown 页面不需要认证配置
-    delete current.url;
-    if (content !== undefined) {
-      // 请求携带新文本：写入独立 md 文件（已有路径则复用文件名）
-      if (!content.trim()) return res.status(400).json({ error: 'Markdown 内容不能为空' });
-      const fileName = isContentPath(current.content) ? path.basename(current.content) : current.id + '.md';
-      current.content = writeMdFile(fileName, content);
-    } else if (!isContentPath(current.content)) {
-      // 旧版内联内容 / 由 link 切换而来无内容：迁移或生成占位独立文件
-      const text = (current.content && current.content.trim())
-        ? current.content
-        : '# 新文档\n\n点击右上角「编辑」开始编写内容。';
-      current.content = writeMdFile(current.id + '.md', text);
+    if (current.type === 'custom') {
+      delete current.auth;
+      delete current.url;
+      if (req.body.entry !== undefined) {
+        const entry = String(req.body.entry || 'index.html').trim();
+        if (/[/\\]/.test(entry) || entry.includes('..')) return res.status(400).json({ error: '入口文件名不合法' });
+        current.entry = entry || 'index.html';
+      }
+    } else {
+      deleteCustomPageDir(current.id); // 类型切换为非 custom 时清理目录
+      delete current.entry;
+      delete current.auth; // markdown 页面不需要认证配置
+      delete current.url;
+    }
+    if (current.type === 'markdown') {
+      if (content !== undefined) {
+        // 请求携带新文本：写入独立 md 文件（已有路径则复用文件名）
+        if (!content.trim()) return res.status(400).json({ error: 'Markdown 内容不能为空' });
+        const fileName = isContentPath(current.content) ? path.basename(current.content) : current.id + '.md';
+        current.content = writeMdFile(fileName, content);
+      } else if (!isContentPath(current.content)) {
+        // 旧版内联内容 / 由 link 切换而来无内容：迁移或生成占位独立文件
+        const text = (current.content && current.content.trim())
+          ? current.content
+          : '# 新文档\n\n点击右上角「编辑」开始编写内容。';
+        current.content = writeMdFile(current.id + '.md', text);
+      }
     }
   }
 
@@ -285,8 +445,42 @@ app.delete('/hilbert-api/pages/:id', (req, res) => {
   }
   const [removed] = pages.splice(idx, 1);
   deleteMdFile(removed.content); // 同步删除对应的 md 文件
+  deleteCustomPageDir(removed.id); // 同步删除自定义页面资源目录
   writePages(pages);
   res.json(removed);
+});
+
+// ---------- API：自定义页面文件管理 ----------
+
+// 上传文件（支持多文件 + zip 包）
+app.post('/hilbert-api/pages/:id/upload', (req, res) => {
+  upload.array('files', 50)(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    handleCustomUpload(req, res);
+  });
+});
+
+// 列出文件
+app.get('/hilbert-api/pages/:id/files', (req, res) => {
+  const dir = customPageDir(req.params.id);
+  if (!fs.existsSync(dir)) return res.json([]);
+  const files = fs.readdirSync(dir).filter(f => {
+    try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; }
+  }).map(name => ({ name, size: fs.statSync(path.join(dir, name)).size }));
+  res.json(files);
+});
+
+// 删除单个文件
+app.delete('/hilbert-api/pages/:id/files/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename);
+  if (!filename || filename.startsWith('.')) return res.status(400).json({ error: '文件名不合法' });
+  const page = readPages().find(p => p.id === req.params.id && p.type === 'custom');
+  if (!page) return res.status(404).json({ error: '页面不存在' });
+  if (filename === (page.entry || 'index.html')) return res.status(400).json({ error: '不能删除入口文件' });
+  const filePath = path.join(customPageDir(req.params.id), filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件不存在' });
+  fs.unlinkSync(filePath);
+  res.json({ deleted: filename });
 });
 
 // ---------- API：分组管理 ----------
@@ -588,6 +782,7 @@ const originalWritePages = writePages;
 writePages = function(pages) {
   originalWritePages(pages);
   registerProxyRoutes();
+  registerCustomRoutes();
 };
 
 // 代理转发主体
@@ -799,7 +994,7 @@ function findPageByReferer(referer) {
 app.use((req, res, next) => {
   const reqPath = req.url.split('?')[0];
   // 管理 API 不参与兜底；命中已注册代理前缀的请求交给动态路由处理
-  if (reqPath.startsWith('/hilbert-api')) return next();
+  if (reqPath.startsWith('/hilbert-api') || reqPath.startsWith('/hilbert-custom')) return next();
   for (const pathPrefix of proxyRoutes.keys()) {
     if (reqPath === pathPrefix || reqPath.startsWith(pathPrefix + '/')) return next();
   }
@@ -823,8 +1018,12 @@ function migrateInlineMarkdown() {
 }
 migrateInlineMarkdown();
 
-// 启动时注册代理路由（必须在所有函数定义之后）
+// 启动时注册代理路由与自定义页面静态路由（必须在所有函数定义之后）
 registerProxyRoutes();
+registerCustomRoutes();
+
+// 自定义页面静态资源分发（只注册一次，内部按 pageId 动态查找）
+app.use('/hilbert-custom', customPagesDispatcher);
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`后台已启动: http://${HOST}:${PORT}`);

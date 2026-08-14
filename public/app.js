@@ -7,6 +7,7 @@ let deletingId = null;
 let currentType = 'link'; // 弹窗中当前选择的页面类型
 let mdEditing = false; // 是否处于 Markdown 右侧编辑模式
 let currentView = 'welcome'; // welcome | page | settings
+let customFiles = [];
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -29,6 +30,12 @@ const editSaveBtn = $('editSaveBtn');
 const topbarIcon = $('topbarIcon');
 const topbarName = $('topbarName');
 const openExternalBtn = $('openExternalBtn');
+const customView = $('customView');
+const customFrame = $('customFrame');
+const modalFileList = $('modalFileList');
+const modalFileInput = $('modalFileInput');
+const modalFileUploadZone = $('modalFileUploadZone');
+const customFileField = $('customFileField');
 
 const modalOverlay = $('modalOverlay');
 const confirmOverlay = $('confirmOverlay');
@@ -83,7 +90,7 @@ function renderSidebar() {
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
-        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : ''}</span>
+        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : ''}</span>
         <span class="item-actions">
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
@@ -162,6 +169,8 @@ async function duplicatePage(page) {
     body.url = page.url;
     if (page.proxyMode) body.proxyMode = page.proxyMode;
     if (page.auth) body.auth = page.auth;
+  } else if (page.type === 'custom') {
+    body.sourceId = page.id;
   } else {
     body.content = page.content || '';
   }
@@ -186,11 +195,24 @@ function showPage(page) {
   if (page.type === 'markdown') {
     iframeWrap.classList.add('hidden');
     mdView.classList.remove('hidden');
+    customView.classList.add('hidden');
     loadingMask.classList.add('fade-out');
     openExternalBtn.classList.add('hidden');
     exitMdEdit();
     editToggleBtn.classList.remove('hidden');
     renderMarkdown(page);
+  } else if (page.type === 'custom') {
+    iframeWrap.classList.add('hidden');
+    mdView.classList.add('hidden');
+    customView.classList.remove('hidden');
+    welcomeView.classList.add('hidden');
+    settingsView.classList.add('hidden');
+    loadingMask.classList.add('fade-out');
+    openExternalBtn.classList.add('hidden');
+    editToggleBtn.classList.add('hidden');
+    exitMdEdit();
+    const entry = page.entry || 'index.html';
+    customFrame.src = '/hilbert-custom/' + page.id + '/' + entry;
   } else {
     mdView.classList.add('hidden');
     iframeWrap.classList.remove('hidden');
@@ -223,6 +245,7 @@ function showWelcome() {
   exitMdEdit();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
+  customView.classList.add('hidden');
   settingsView.classList.add('hidden');
   welcomeView.classList.remove('hidden');
   loadingMask.classList.add('fade-out');
@@ -241,6 +264,7 @@ function showSettings() {
   exitMdEdit();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
+  customView.classList.add('hidden');
   welcomeView.classList.add('hidden');
   settingsView.classList.remove('hidden');
   topbarIcon.textContent = '⚙️';
@@ -438,6 +462,7 @@ function setType(type) {
   $('urlField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.toggle('hidden', !isLink);
   $('authField').classList.toggle('hidden', !isLink);
+  $('customFileField').classList.toggle('hidden', type !== 'custom');
   $('fieldUrl').required = isLink;
   // markdown 页面的正文统一在右侧原地编辑，弹窗不提供内容输入
 }
@@ -512,6 +537,14 @@ function openModal(page = null) {
   $('authHeaderValue').value = hasAuth ? (page.auth.headerValue || '') : '';
   fillGroupSelect(page ? page.group : (groups[0] || '未分组'));
   setType(page ? page.type || 'link' : 'link');
+  // 重置弹窗文件管理状态
+  modalFileInput.value = '';
+  customFiles = [];
+  modalFileList.innerHTML = '';
+  // 编辑 custom 页面时加载已有文件
+  if (page && page.type === 'custom') {
+    loadModalFiles(page.id);
+  }
   formError.classList.add('hidden');
   modalOverlay.classList.remove('hidden');
   setTimeout(() => $('fieldName').focus(), 50);
@@ -519,6 +552,10 @@ function openModal(page = null) {
 
 function closeModal() {
   modalOverlay.classList.add('hidden');
+  editingId = null;
+  customFiles = [];
+  modalFileList.innerHTML = '';
+  modalFileInput.value = '';
 }
 
 $('pageForm').addEventListener('submit', async e => {
@@ -526,7 +563,7 @@ $('pageForm').addEventListener('submit', async e => {
   const body = {
     type: currentType,
     name: $('fieldName').value.trim(),
-    icon: $('fieldIcon').value.trim() || (currentType === 'markdown' ? '📝' : '🔗'),
+    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️' }[currentType] || '🔗'),
     group: $('fieldGroup').value || '未分组'
   };
   if (currentType === 'link') {
@@ -545,7 +582,6 @@ $('pageForm').addEventListener('submit', async e => {
         body.auth = { mode, username: $('authUser').value.trim(), password: $('authPass').value };
         if (mode === 'login') {
           body.auth.loginPath = $('authLoginPath').value.trim() || '/login';
-          // 请求格式与字段名：适配不同目标站（如 XXL-JOB 需 form + userName/password）
           body.auth.loginFormat = $('authLoginFormat').value;
           const userField = $('authUserField').value.trim();
           const passwordField = $('authPasswordField').value.trim();
@@ -557,7 +593,6 @@ $('pageForm').addEventListener('submit', async e => {
       body.auth = null;
     }
   }
-  // markdown 正文统一在右侧原地编辑维护，新建时由服务端生成占位文档
   const saveBtn = $('saveBtn');
   saveBtn.disabled = true;
   try {
@@ -566,11 +601,19 @@ $('pageForm').addEventListener('submit', async e => {
       showToast('页面已更新');
     } else {
       const created = await api('', { method: 'POST', body: JSON.stringify(body) });
+      editingId = created.id; // 保存 ID 以便后续上传文件
       activeId = created.id;
       currentView = 'page';
-      showToast('页面已创建');
+      showToast('页面已创建，现在可以上传文件');
+      // 新建 custom 页面后，加载文件列表（此时只有默认 index.html）
+      if (currentType === 'custom') {
+        await loadModalFiles(created.id);
+      }
     }
-    closeModal();
+    // custom 页面不关闭弹窗，允许继续上传文件；其他类型正常关闭
+    if (currentType !== 'custom') {
+      closeModal();
+    }
     await refresh();
   } catch (err) {
     formError.textContent = err.message;
@@ -608,6 +651,104 @@ $('confirmDelete').addEventListener('click', async () => {
     await refresh();
   } catch (err) {
     showToast(err.message);
+  }
+});
+
+// ---------- 弹窗内自定义页面文件管理 ----------
+async function loadModalFiles(pageId) {
+  try {
+    const res = await fetch('/hilbert-api/pages/' + pageId + '/files', {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    customFiles = await res.json();
+    renderModalFileList(pageId);
+  } catch (err) {
+    showToast('加载文件列表失败: ' + err.message);
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function renderModalFileList(pageId) {
+  modalFileList.innerHTML = '';
+  if (customFiles.length === 0) {
+    modalFileList.innerHTML = '<li class="file-empty">暂无文件，请上传</li>';
+    return;
+  }
+  const page = pages.find(p => p.id === pageId);
+  const entry = page ? (page.entry || 'index.html') : 'index.html';
+  for (const f of customFiles) {
+    const li = document.createElement('li');
+    li.className = 'file-item';
+    const isEntry = f.name === entry;
+    li.innerHTML = `
+      <span class="file-name">${escapeHtml(f.name)}${isEntry ? ' <em class="file-entry-badge">入口</em>' : ''}</span>
+      <span class="file-size">${formatFileSize(f.size)}</span>
+      <span class="file-actions">
+        ${!isEntry ? '<button class="file-del-btn" title="删除">✕</button>' : ''}
+      </span>`;
+    if (!isEntry) {
+      li.querySelector('.file-del-btn').addEventListener('click', () => deleteModalFile(pageId, f.name));
+    }
+    modalFileList.appendChild(li);
+  }
+}
+
+async function uploadModalFiles() {
+  if (!editingId) {
+    showToast('请先保存页面配置');
+    return;
+  }
+  const files = modalFileInput.files;
+  if (!files.length) return;
+  const formData = new FormData();
+  for (const f of files) formData.append('files', f);
+  try {
+    const res = await fetch('/hilbert-api/pages/' + editingId + '/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '上传失败');
+    showToast('已上传 ' + data.uploaded.length + ' 个文件');
+    modalFileInput.value = '';
+    await loadModalFiles(editingId);
+    // 刷新预览 iframe
+    const page = pages.find(p => p.id === editingId);
+    if (page) customFrame.src = '/hilbert-custom/' + editingId + '/' + (page.entry || 'index.html') + '?t=' + Date.now();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+async function deleteModalFile(pageId, filename) {
+  if (!confirm('确定要删除文件「' + filename + '」吗？')) return;
+  try {
+    const res = await fetch('/hilbert-api/pages/' + pageId + '/files/' + encodeURIComponent(filename), { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '删除失败');
+    showToast('文件已删除');
+    await loadModalFiles(pageId);
+    const page = pages.find(p => p.id === pageId);
+    if (page) customFrame.src = '/hilbert-custom/' + pageId + '/' + (page.entry || 'index.html') + '?t=' + Date.now();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+// 弹窗文件上传事件
+$('modalFileUploadZone').addEventListener('click', () => modalFileInput.click());
+modalFileInput.addEventListener('change', uploadModalFiles);
+modalFileUploadZone.addEventListener('dragover', e => { e.preventDefault(); modalFileUploadZone.classList.add('dragover'); });
+modalFileUploadZone.addEventListener('dragleave', () => modalFileUploadZone.classList.remove('dragover'));
+modalFileUploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  modalFileUploadZone.classList.remove('dragover');
+  const dt = e.dataTransfer;
+  if (dt.files.length) {
+    modalFileInput.files = dt.files;
+    uploadModalFiles();
   }
 });
 
@@ -673,6 +814,13 @@ async function init() {
   }
   renderSidebar();
   showWelcome(); // 起始页统一为欢迎页
+
+  // 加载版本号
+  try {
+    const vRes = await fetch('/hilbert-api/version', { headers: { 'Content-Type': 'application/json' } });
+    const vData = await vRes.json();
+    $('versionBadge').textContent = 'v' + vData.version;
+  } catch (_) { /* ignore */ }
 }
 
 init();

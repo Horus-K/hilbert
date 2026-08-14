@@ -511,6 +511,20 @@ async function applyAuthHeaders(page, headers) {
 // 存储已注册的代理路由，用于 WebSocket upgrade 与 Referer 兜底时查找页面
 const proxyRoutes = new Map(); // pathPrefix -> { page, mount }（mount=true 为挂载路由）
 
+// 最近经由代理转发的请求路径 -> 页面 id（来源归属链）：浏览器子资源可能以
+//「已被代理的资源的 URL」作为 Referer（如 CSS 内 url() 触发的字体/图片请求，
+// Referer 为该 CSS 自身的 URL），这类 Referer 本身不在已注册前缀下，
+// 用「该路径最近一次由哪个页面转发」完成二次归属
+const recentProxyPaths = new Map(); // reqPath -> pageId（插入序，超限淘汰最旧）
+const RECENT_PROXY_PATHS_LIMIT = 5000;
+
+function recordProxyPath(page, reqPath) {
+  recentProxyPaths.set(reqPath, page.id);
+  if (recentProxyPaths.size > RECENT_PROXY_PATHS_LIMIT) {
+    recentProxyPaths.delete(recentProxyPaths.keys().next().value);
+  }
+}
+
 function registerProxyRoutes() {
   proxyRoutes.clear();
   
@@ -580,6 +594,8 @@ writePages = function(pages) {
 // matchedPath: 实际匹配的恒等路由路径（恒等映射时目标路径 = 请求路径）
 // mountPrefix: 挂载模式页面的挂载路径（/hilbert-proxy/<id>），转发时剥离挂载前缀，并重写 HTML/CSS 绝对路径
 function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
+  // 记录路径归属，供 Referer 兜底的归属链规则（findPageByReferer ③）使用
+  recordProxyPath(page, req.originalUrl.split('?')[0]);
   const resolved = resolveProxyTarget(page, req.originalUrl, mountPrefix || '');
   const { base, target } = resolved;
   // 重写前缀：挂载模式把绝对路径重写为挂载前缀；恒等映射无需重写
@@ -722,6 +738,8 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
 //      动态插入的绝对路径资源，这类请求会以原路径逃逸到本服务器
 //   ② 未命中再按 Referer origin 匹配页面目标 URL 的 origin（如页面经站内跳转
 //      到了未注册的路径），仅恒等映射页面适用
+//   ③ Referer 指向的路径本身是经由本代理转发过的资源（如 CSS 的 URL）：
+//      按该路径最近一次的转发归属确定来源页面
 function findPageByReferer(referer) {
   let refUrl;
   try {
@@ -759,7 +777,19 @@ function findPageByReferer(referer) {
       if (!best || target.pathname.length > new URL(best.url).pathname.length) best = p;
     }
   }
-  return best ? { page: best, mountPrefix: null } : null;
+  if (best) return { page: best, mountPrefix: null };
+  // ③ 归属链：Referer 路径最近一次由哪个页面转发，资源就归属于哪个页面
+  const servedBy = recentProxyPaths.get(refUrl.pathname);
+  if (servedBy) {
+    const p = readPages().find(x => x.id === servedBy && x.type === 'link');
+    if (p) {
+      return {
+        page: p,
+        mountPrefix: p.proxyMode === 'mount' ? '/hilbert-proxy/' + p.id : null
+      };
+    }
+  }
+  return null;
 }
 
 // ---------- Referer 兜底转发 ----------

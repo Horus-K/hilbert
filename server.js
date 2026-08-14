@@ -43,8 +43,11 @@ const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
 const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
 
-// 超级管理员邮箱（从 config.js 读取）
-const ADMIN_EMAIL = (config.admin_email || '').toLowerCase();
+// 超级管理员邮箱（从 config.js 读取，trim + lowercase 防止 .env 尾部空白导致匹配失败）
+const ADMIN_EMAIL = (config.admin_email || '').trim().toLowerCase();
+if (!ADMIN_EMAIL) {
+  console.warn('⚠️  未配置超级管理员邮箱 (ADMIN_EMAIL)，RBAC 通配符分配将影响所有用户包括实际管理员');
+}
 
 // 支持的页面类型：link = iframe 嵌入外部链接，markdown = 渲染 Markdown 文档
 const PAGE_TYPES = ['link', 'markdown', 'custom'];

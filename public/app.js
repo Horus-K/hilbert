@@ -502,6 +502,9 @@ function renderRbacRoles() {
 function renderRbacAssignments() {
   const container = $('rbacAssignList');
   container.innerHTML = '';
+  // 管理员提示：显示在分配列表下方，消除管理员对自身权限的疑虑
+  const hint = $('rbacAdminHint');
+  if (hint) hint.style.display = isAdmin ? '' : 'none';
   if (rbacAssignments.length === 0) {
     container.innerHTML = '<div class="rbac-empty">暂无分配关系</div>';
     return;

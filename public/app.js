@@ -848,6 +848,7 @@ function setType(type) {
   });
   const isLink = type === 'link';
   $('urlField').classList.toggle('hidden', !isLink);
+  $('resolveIpField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.toggle('hidden', !isLink);
   $('authField').classList.toggle('hidden', !isLink);
   $('customFileField').classList.toggle('hidden', type !== 'custom');
@@ -907,6 +908,7 @@ function openModal(page = null) {
   $('modalTitle').textContent = page ? '编辑页面' : '新建页面';
   $('fieldName').value = page ? page.name : '';
   $('fieldUrl').value = page && page.type !== 'markdown' ? page.url : '';
+  $('fieldResolveIp').value = page ? (page.resolveIp || '') : '';
   $('fieldProxyMode').value = page && page.proxyMode === 'mount' ? 'mount' : 'identity';
   updateProxyModeHint();
   $('fieldIcon').value = page ? page.icon : '';
@@ -957,6 +959,8 @@ $('pageForm').addEventListener('submit', async e => {
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();
     body.proxyMode = $('fieldProxyMode').value;
+    const resolveIp = $('fieldResolveIp').value.trim();
+    if (resolveIp) body.resolveIp = resolveIp;
     // 认证配置：勾选时按所选模式提交，未勾选时显式清除
     if ($('authEnabled').checked) {
       const mode = $('authMode').value;

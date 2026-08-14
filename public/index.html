@@ -184,6 +184,11 @@
           <label>嵌入链接 <span class="required">*</span></label>
           <input type="url" id="fieldUrl" placeholder="https://example.com/..." required />
         </div>
+        <div class="form-item hidden" id="resolveIpField">
+          <label>DNS 解析 IP</label>
+          <input type="text" id="fieldResolveIp" placeholder="如 10.99.97.104（留空则走正常 DNS 解析）" />
+          <p class="form-hint">指定域名解析到的 IP 地址，代理将直接连接该 IP 而非通过 DNS 解析。适用于内网服务或域名尚未解析的场景</p>
+        </div>
         <div class="form-item hidden" id="proxyModeField">
           <label>代理模式</label>
           <select id="fieldProxyMode">

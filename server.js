@@ -38,6 +38,17 @@ app.use((req, res, next) => {
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
 
+// DNS 覆盖：当页面配置了 resolveIp 时，返回自定义 lookup 函数，
+// 让 HTTP 请求直接连接指定 IP 而非通过 DNS 解析域名
+function getDnsLookup(page) {
+  if (!page || !page.resolveIp) return undefined;
+  const ip = page.resolveIp;
+  return (hostname, options, callback) => {
+    if (typeof options === 'function') { callback = options; }
+    callback(null, ip, 4);
+  };
+}
+
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
@@ -795,7 +806,7 @@ app.post('/hilbert-api/pages', (req, res) => {
   if (!hasPermission(req.user.email, '*', 'create')) {
     return res.status(403).json({ error: '没有创建页面的权限' });
   }
-  const { type = 'link', name, url, icon, group, content, auth, proxyMode } = req.body || {};
+  const { type = 'link', name, url, icon, group, content, auth, proxyMode, resolveIp } = req.body || {};
   if (!PAGE_TYPES.includes(type)) {
     return res.status(400).json({ error: '不支持的页面类型' });
   }
@@ -817,6 +828,7 @@ app.post('/hilbert-api/pages', (req, res) => {
     page.url = url.trim();
     // 代理模式：mount（/hilbert-proxy/<id> 挂载）由编辑页面手动指定；默认恒等映射（不落盘该字段）
     if (proxyMode === 'mount') page.proxyMode = 'mount';
+    if (resolveIp) page.resolveIp = resolveIp.trim();
     const normalized = normalizeAuth(auth);
     if (normalized === undefined) {
       return res.status(400).json({ error: '认证信息不完整' });
@@ -857,7 +869,7 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
   if (idx === -1) {
     return res.status(404).json({ error: '页面不存在' });
   }
-  const { type, name, url, icon, group, content, auth, proxyMode } = req.body || {};
+  const { type, name, url, icon, group, content, auth, proxyMode, resolveIp } = req.body || {};
   const current = pages[idx];
 
   if (type !== undefined) {
@@ -869,6 +881,10 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
     current.name = name.trim();
   }
   if (url !== undefined) current.url = url.trim();
+  if (resolveIp !== undefined) {
+    if (resolveIp) current.resolveIp = resolveIp.trim();
+    else delete current.resolveIp; // 清空时移除字段
+  }
   if (proxyMode !== undefined) {
     if (proxyMode === 'mount') current.proxyMode = 'mount';
     else delete current.proxyMode; // 切回恒等映射：移除该字段
@@ -895,6 +911,7 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
     if (current.type === 'custom') {
       delete current.auth;
       delete current.url;
+      delete current.resolveIp;
       if (req.body.entry !== undefined) {
         const entry = String(req.body.entry || 'index.html').trim();
         if (/[/\\]/.test(entry) || entry.includes('..')) return res.status(400).json({ error: '入口文件名不合法' });
@@ -905,6 +922,7 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
       delete current.entry;
       delete current.auth; // markdown 页面不需要认证配置
       delete current.url;
+      delete current.resolveIp;
     }
     if (current.type === 'markdown') {
       if (content !== undefined) {
@@ -1112,14 +1130,17 @@ function performLogin(page, base) {
     const contentType = auth.loginFormat === 'form'
       ? 'application/x-www-form-urlencoded'
       : 'application/json';
-    const loginReq = lib.request(base.origin + auth.loginPath, {
+    const loginOpts = {
       method: 'POST',
       headers: {
         'Content-Type': contentType,
         'Content-Length': Buffer.byteLength(body),
         'Accept': 'application/json'
       }
-    }, loginRes => {
+    };
+    const loginLookup = getDnsLookup(page);
+    if (loginLookup) loginOpts.lookup = loginLookup;
+    const loginReq = lib.request(base.origin + auth.loginPath, loginOpts, loginRes => {
       const setCookies = loginRes.headers['set-cookie'] || [];
       const chunks = [];
       loginRes.on('data', c => chunks.push(c));
@@ -1348,7 +1369,10 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
 
       await new Promise((resolve, reject) => {
         const agent = base.protocol === 'https:' ? httpsAgent : httpAgent;
-        const proxyReq = lib.request(target, { method: req.method, headers, agent }, proxyRes => {
+        const lookup = getDnsLookup(page);
+        const reqOpts = { method: req.method, headers, agent };
+        if (lookup) reqOpts.lookup = lookup;
+        const proxyReq = lib.request(target, reqOpts, proxyRes => {
           // login 模式会话过期检测：401 或被重定向到登录页 → 重新登录后重试一次
           const expired = auth && auth.mode === 'login' && !isRetry && (
             proxyRes.statusCode === 401 ||
@@ -1459,9 +1483,31 @@ function findPageByReferer(referer) {
     }
   }
   if (page) return { page, mountPrefix };
+  // ①.5 同域路径归属：Referer 路径以恒等映射页面的 URL 路径开头，说明请求来自该页面，
+  // 即使请求路径不在已注册前缀下（如页面 JS 请求不同前缀的 API），也转发到同一目标站
+  const refOrigin = refUrl.origin;
+  let pathMatchPage = null;
+  let pathMatchLen = 0;
+  for (const p of readPages()) {
+    if (p.type !== 'link' || p.proxyMode === 'mount') continue;
+    let target;
+    try {
+      target = new URL(p.url);
+    } catch {
+      continue;
+    }
+    if (target.origin !== refOrigin) continue;
+    const pagePath = target.pathname.replace(/\/+$/, '');
+    if (!pagePath) continue; // 无路径（纯 origin）跳过，由规则②处理
+    if ((refUrl.pathname === pagePath || refUrl.pathname.startsWith(pagePath + '/')) &&
+        pagePath.length > pathMatchLen) {
+      pathMatchPage = p;
+      pathMatchLen = pagePath.length;
+    }
+  }
+  if (pathMatchPage) return { page: pathMatchPage, mountPrefix: null };
   // ② 目标站 origin 匹配：面板自身 origin（恒等映射页面 URL 无路径时与目标
   // origin 相同）不参与，避免把面板请求误转发给目标站
-  const refOrigin = refUrl.origin;
   let best = null;
   for (const p of readPages()) {
     if (p.type !== 'link' || p.proxyMode === 'mount') continue;
@@ -1579,7 +1625,10 @@ server.on('upgrade', async (req, socket, head) => {
     await applyAuthHeaders(page, headers);
 
     const lib = base.protocol === 'https:' ? https : http;
-    const proxyReq = lib.request(target, { method: 'GET', headers });
+    const wsOpts = { method: 'GET', headers };
+    const wsLookup = getDnsLookup(page);
+    if (wsLookup) wsOpts.lookup = wsLookup;
+    const proxyReq = lib.request(target, wsOpts);
     proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
       // 把目标的 101 响应原样写回客户端，然后双向透传数据帧
       let raw = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;

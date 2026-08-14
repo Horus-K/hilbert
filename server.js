@@ -61,9 +61,9 @@ const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
 const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
 
-// 超级管理员邮箱（从 config.js 读取，trim + lowercase 防止 .env 尾部空白导致匹配失败）
-const ADMIN_EMAIL = (config.admin_email || '').trim().toLowerCase();
-if (!ADMIN_EMAIL) {
+// 超级管理员邮箱列表（从 config.js 读取，已 trim + lowercase 防止 .env 尾部空白导致匹配失败）
+const ADMIN_EMAILS = config.admin_emails || [];
+if (ADMIN_EMAILS.length === 0) {
   console.warn('⚠️  未配置超级管理员邮箱 (ADMIN_EMAIL)，RBAC 通配符分配将影响所有用户包括实际管理员');
 }
 
@@ -354,7 +354,7 @@ function writeRoles(data) {
 const ALL_ACTIONS = ['read', 'create', 'update', 'delete'];
 
 function isAdmin(email) {
-  return (email || '').toLowerCase() === ADMIN_EMAIL;
+  return ADMIN_EMAILS.includes((email || '').toLowerCase());
 }
 
 // 邮箱通配符匹配：支持 *@domain.com 等通配模式

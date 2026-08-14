@@ -8,6 +8,11 @@ let currentType = 'link'; // 弹窗中当前选择的页面类型
 let mdEditing = false; // 是否处于 Markdown 右侧编辑模式
 let currentView = 'welcome'; // welcome | page | settings
 let customFiles = [];
+let isAdmin = false;          // 当前用户是否超级管理员
+let myPermissions = null;     // 当前用户权限缓存 [{ pageId, actions }]
+let rbacRoles = [];           // RBAC 角色列表
+let rbacAssignments = [];     // RBAC 分配列表
+let editingRoleId = null;     // 当前编辑的角色 ID（null 为新建）
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -36,6 +41,10 @@ const modalFileList = $('modalFileList');
 const modalFileInput = $('modalFileInput');
 const modalFileUploadZone = $('modalFileUploadZone');
 const customFileField = $('customFileField');
+const userAvatar = $('userAvatar');
+const userName = $('userName');
+const userEmail = $('userEmail');
+const logoutBtn = $('logoutBtn');
 
 const modalOverlay = $('modalOverlay');
 const confirmOverlay = $('confirmOverlay');
@@ -43,8 +52,19 @@ const formError = $('formError');
 const toast = $('toast');
 
 // ---------- API ----------
+// 全局 fetch 包装：携带 Cookie + 401 自动跳转登录
+function authenticatedFetch(url, options) {
+  return fetch(url, Object.assign({ credentials: 'include' }, options)).then(function(res) {
+    if (res.status === 401) {
+      window.location.href = '/login.html';
+      return new Promise(function() {}); // 挂起，等待重定向
+    }
+    return res;
+  });
+}
+
 async function api(path, options = {}) {
-  const res = await fetch('/hilbert-api/pages' + path, {
+  const res = await authenticatedFetch('/hilbert-api/pages' + path, {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
@@ -54,7 +74,7 @@ async function api(path, options = {}) {
 }
 
 async function groupsApi(path = '', options = {}) {
-  const res = await fetch('/hilbert-api/groups' + path, {
+  const res = await authenticatedFetch('/hilbert-api/groups' + path, {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
@@ -63,16 +83,52 @@ async function groupsApi(path = '', options = {}) {
   return data;
 }
 
+async function rbacApi(path = '', options = {}) {
+  const res = await authenticatedFetch('/hilbert-api/rbac' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
+  return data;
+}
+
+// ---------- 权限判断 ----------
+function hasPagePermission(pageId, action) {
+  if (isAdmin) return true;
+  if (!myPermissions) return false;
+  for (const p of myPermissions) {
+    if (p.pageId === '*' || p.pageId === pageId) {
+      if (p.actions.includes(action)) return true;
+    }
+  }
+  return false;
+}
+
+function canCreatePage() { return hasPagePermission('*', 'create'); }
+function canEditPage(pageId) { return hasPagePermission(pageId, 'update'); }
+function canDeletePage(pageId) { return hasPagePermission(pageId, 'delete'); }
+function canReadPage(pageId) { return hasPagePermission(pageId, 'read'); }
+
 // ---------- 渲染 ----------
 function renderSidebar() {
   pageList.innerHTML = '';
   $('settingsEntry').classList.toggle('active', currentView === 'settings');
+
+  // 权限控制：新建页面按钮
+  const canCreate = canCreatePage();
+  $('newPageBtn').classList.toggle('hidden', !canCreate && !isAdmin);
+
+  // 权限控制：设置入口仅管理员可见
+  $('settingsEntry').classList.toggle('hidden', !isAdmin);
 
   if (pages.length === 0) return;
 
   // 按分组聚合，保持出现顺序
   const groupMap = new Map();
   for (const p of pages) {
+    // 非管理员：过滤无 read 权限的页面
+    if (!isAdmin && !canReadPage(p.id)) continue;
     const g = p.group || '未分组';
     if (!groupMap.has(g)) groupMap.set(g, []);
     groupMap.get(g).push(p);
@@ -86,6 +142,9 @@ function renderSidebar() {
 
     for (const p of items) {
       const item = document.createElement('div');
+      const canEdit = canEditPage(p.id);
+      const canDel = canDeletePage(p.id);
+      const canCopy = canCreatePage();
       item.className = 'page-item' + (p.id === activeId ? ' active' : '');
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
@@ -96,9 +155,9 @@ function renderSidebar() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
           <div class="item-menu">
-            <button class="menu-copy">复制</button>
-            <button class="menu-edit">编辑</button>
-            <button class="menu-del danger">删除</button>
+            ${canCopy ? '<button class="menu-copy">复制</button>' : ''}
+            ${canEdit ? '<button class="menu-edit">编辑</button>' : ''}
+            ${canDel ? '<button class="menu-del danger">删除</button>' : ''}
           </div>
         </span>`;
 
@@ -106,7 +165,12 @@ function renderSidebar() {
       // 三点菜单：展开/收起，同一时间只保留一个打开的菜单
       // 用 fixed 定位避开 .page-list 的 overflow 裁剪，位置按按钮实际坐标计算
       const menu = item.querySelector('.item-menu');
-      item.querySelector('.more').addEventListener('click', e => {
+      const moreBtn = item.querySelector('.more');
+      // 如果没有任何操作按钮，隐藏三点菜单
+      if (!menu.children.length) {
+        moreBtn.classList.add('hidden');
+      }
+      moreBtn.addEventListener('click', e => {
         e.stopPropagation();
         const willOpen = !menu.classList.contains('open');
         closeAllItemMenus();
@@ -119,16 +183,19 @@ function renderSidebar() {
         }
       });
       menu.addEventListener('click', e => e.stopPropagation());
-      menu.querySelector('.menu-copy').addEventListener('click', () => {
+      const copyBtn = menu.querySelector('.menu-copy');
+      if (copyBtn) copyBtn.addEventListener('click', () => {
         closeAllItemMenus();
         duplicatePage(p);
       });
-      menu.querySelector('.menu-edit').addEventListener('click', () => {
+      const editBtn = menu.querySelector('.menu-edit');
+      if (editBtn) editBtn.addEventListener('click', () => {
         closeAllItemMenus();
         if (!confirmDiscardIfEditing()) return;
         openModal(p);
       });
-      menu.querySelector('.menu-del').addEventListener('click', () => {
+      const delBtn = menu.querySelector('.menu-del');
+      if (delBtn) delBtn.addEventListener('click', () => {
         closeAllItemMenus();
         if (!confirmDiscardIfEditing()) return;
         openConfirm(p);
@@ -199,7 +266,8 @@ function showPage(page) {
     loadingMask.classList.add('fade-out');
     openExternalBtn.classList.add('hidden');
     exitMdEdit();
-    editToggleBtn.classList.remove('hidden');
+    // 权限控制：编辑按钮仅对有 update 权限的用户显示
+    editToggleBtn.classList.toggle('hidden', !canEditPage(page.id) && !isAdmin);
     renderMarkdown(page);
   } else if (page.type === 'custom') {
     iframeWrap.classList.add('hidden');
@@ -254,10 +322,18 @@ function showWelcome() {
   reloadBtn.classList.add('hidden');
   openExternalBtn.classList.add('hidden');
   editToggleBtn.classList.add('hidden');
+  // 权限控制：欢迎页按钮
+  $('welcomeNewBtn').classList.toggle('hidden', !canCreatePage() && !isAdmin);
+  $('welcomeSettingsBtn').classList.toggle('hidden', !isAdmin);
   renderSidebar();
 }
 
 function showSettings() {
+  // 仅超级管理员可访问设置页
+  if (!isAdmin) {
+    showToast('仅超级管理员可访问设置页');
+    return;
+  }
   if (!confirmDiscardIfEditing()) return;
   currentView = 'settings';
   activeId = null;
@@ -274,6 +350,13 @@ function showSettings() {
   editToggleBtn.classList.add('hidden');
   groupError.classList.add('hidden');
   renderGroupList();
+  // RBAC 面板：仅管理员可见
+  if (isAdmin) {
+    $('rbacPanel').classList.remove('hidden');
+    loadAndRenderRbac();
+  } else {
+    $('rbacPanel').classList.add('hidden');
+  }
   renderSidebar();
 }
 
@@ -369,6 +452,299 @@ $('addGroupBtn').addEventListener('click', addGroup);
 newGroupName.addEventListener('keydown', e => {
   if (e.key === 'Enter') addGroup();
 });
+
+// ---------- RBAC 权限管理（设置页） ----------
+
+async function loadAndRenderRbac() {
+  try {
+    [rbacRoles, rbacAssignments] = await Promise.all([
+      rbacApi('/roles'),
+      rbacApi('/assignments')
+    ]);
+    renderRbacRoles();
+    renderRbacAssignments();
+  } catch (err) {
+    showToast('加载权限配置失败: ' + err.message);
+  }
+}
+
+function renderRbacRoles() {
+  const container = $('rbacRoleList');
+  container.innerHTML = '';
+  if (rbacRoles.length === 0) {
+    container.innerHTML = '<div class="rbac-empty">暂无角色，请点击上方按钮新建</div>';
+    return;
+  }
+  for (const role of rbacRoles) {
+    const assignedCount = rbacAssignments.filter(a => a.roleId === role.id).length;
+    const permSummary = (role.permissions || []).map(p => {
+      const label = p.pageId === '*' ? '全部页面(自动包含新页面)' : (pages.find(pg => pg.id === p.pageId)?.name || p.pageId.slice(0, 8));
+      return label + '(' + p.actions.join('/') + ')';
+    }).join('、') || '无权限';
+    const card = document.createElement('div');
+    card.className = 'rbac-role-card';
+    card.innerHTML = `
+      <div class="rbac-role-info">
+        <span class="rbac-role-name">${escapeHtml(role.name)}</span>
+        <span class="rbac-role-desc">${escapeHtml(role.description || '')}</span>
+        <span class="rbac-role-meta">${assignedCount} 个用户 · ${escapeHtml(permSummary)}</span>
+      </div>
+      <div class="rbac-role-actions">
+        <button class="ghost-btn rbac-edit-role" data-id="${role.id}">编辑</button>
+        <button class="danger-btn rbac-del-role" data-id="${role.id}">删除</button>
+      </div>`;
+    card.querySelector('.rbac-edit-role').addEventListener('click', () => openRoleModal(role));
+    card.querySelector('.rbac-del-role').addEventListener('click', () => deleteRole(role));
+    container.appendChild(card);
+  }
+}
+
+function renderRbacAssignments() {
+  const container = $('rbacAssignList');
+  container.innerHTML = '';
+  if (rbacAssignments.length === 0) {
+    container.innerHTML = '<div class="rbac-empty">暂无分配关系</div>';
+    return;
+  }
+  for (const a of rbacAssignments) {
+    const role = rbacRoles.find(r => r.id === a.roleId);
+    const roleName = role ? role.name : '(已删除角色)';
+    const isWildcard = a.email.includes('*');
+    const row = document.createElement('div');
+    row.className = 'rbac-assign-row';
+    row.innerHTML = `
+      <span class="rbac-assign-email">${escapeHtml(a.email)}${isWildcard ? ' <span class="rbac-wildcard-badge" title="通配符模式：匹配所有符合条件的用户">通配</span>' : ''}</span>
+      <span class="rbac-assign-role">${escapeHtml(roleName)}</span>
+      <button class="danger-btn rbac-del-assign" title="移除">✕</button>`;
+    row.querySelector('.rbac-del-assign').addEventListener('click', () => removeAssignment(a));
+    container.appendChild(row);
+  }
+}
+
+// 角色编辑弹窗
+function openRoleModal(role = null) {
+  editingRoleId = role ? role.id : null;
+  $('rbacRoleModalTitle').textContent = role ? '编辑角色' : '新建角色';
+  $('rbacRoleName').value = role ? role.name : '';
+  $('rbacRoleDesc').value = role ? (role.description || '') : '';
+  $('rbacRoleError').classList.add('hidden');
+  // 渲染权限表格
+  renderPermTable(role);
+  $('rbacRoleModal').classList.remove('hidden');
+  setTimeout(() => $('rbacRoleName').focus(), 50);
+}
+
+function closeRoleModal() {
+  $('rbacRoleModal').classList.add('hidden');
+  editingRoleId = null;
+}
+
+function renderPermTable(role) {
+  const container = $('rbacPermTable');
+  container.innerHTML = '';
+  // 清除旧的通配提示
+  const oldHint = $('rbacPermAllHint');
+  if (oldHint) oldHint.remove();
+  const rolePerms = role ? (role.permissions || []) : [];
+  // 检查是否已有通配权限
+  const wildcardPerm = rolePerms.find(p => p.pageId === '*');
+  $('rbacPermAll').checked = !!wildcardPerm;
+  // 获取所有页面（包括无 read 权限的，管理员才能配置）
+  const allPages = pages;
+  if (allPages.length === 0) {
+    container.innerHTML = '<div class="rbac-empty">暂无页面可配置</div>';
+    return;
+  }
+  // 表头
+  const header = document.createElement('div');
+  header.className = 'rbac-perm-row rbac-perm-header';
+  header.innerHTML = '<span class="rbac-perm-page">页面</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act-head" data-act="read" /> 查看</label><label><input type="checkbox" class="perm-act-head" data-act="create" /> 新增</label><label><input type="checkbox" class="perm-act-head" data-act="update" /> 修改</label><label><input type="checkbox" class="perm-act-head" data-act="delete" /> 删除</label></span>';
+  container.appendChild(header);
+  // 表头 checkbox 事件：全选/全不选该列
+  header.querySelectorAll('.perm-act-head').forEach(cb => {
+    cb.addEventListener('change', () => {
+      container.querySelectorAll('.perm-act[data-act="' + cb.dataset.act + '"]').forEach(c => c.checked = cb.checked);
+    });
+  });
+  // 每行一个页面
+  const isAllMode = $('rbacPermAll').checked;
+  for (const p of allPages) {
+    // 通配模式下用通配权限的 actions，否则用该页面自己的权限
+    const perm = wildcardPerm || rolePerms.find(rp => rp.pageId === p.id);
+    const actions = perm ? perm.actions : [];
+    const row = document.createElement('div');
+    row.className = 'rbac-perm-row';
+    row.dataset.pageId = p.id;
+    row.innerHTML = `<span class="rbac-perm-page" title="${escapeHtml(p.name)}">${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act" data-act="read" ${actions.includes('read') ? 'checked' : ''} /> 查看</label><label><input type="checkbox" class="perm-act" data-act="create" ${actions.includes('create') ? 'checked' : ''} /> 新增</label><label><input type="checkbox" class="perm-act" data-act="update" ${actions.includes('update') ? 'checked' : ''} /> 修改</label><label><input type="checkbox" class="perm-act" data-act="delete" ${actions.includes('delete') ? 'checked' : ''} /> 删除</label></span>`;
+    // 通配模式下禁用行 checkbox
+    if (isAllMode) {
+      row.querySelectorAll('.perm-act').forEach(cb => { cb.checked = true; cb.disabled = true; });
+    }
+    container.appendChild(row);
+  }
+  // 通配模式下显示提示
+  if (isAllMode) {
+    const hint = document.createElement('p');
+    hint.id = 'rbacPermAllHint';
+    hint.className = 'rbac-perm-all-hint';
+    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的权限';
+    container.parentNode.insertBefore(hint, container.nextSibling);
+  }
+}
+
+function collectPermFromTable() {
+  const isAll = $('rbacPermAll').checked;
+  const permissions = [];
+  if (isAll) {
+    // 通配权限：从表头 checkbox 收集
+    const actions = [];
+    $('rbacPermTable').querySelectorAll('.perm-act-head').forEach(cb => {
+      if (cb.checked) actions.push(cb.dataset.act);
+    });
+    if (actions.length > 0) permissions.push({ pageId: '*', actions });
+  } else {
+    // 逐页收集
+    $('rbacPermTable').querySelectorAll('.rbac-perm-row[data-page-id]').forEach(row => {
+      const actions = [];
+      row.querySelectorAll('.perm-act').forEach(cb => {
+        if (cb.checked) actions.push(cb.dataset.act);
+      });
+      if (actions.length > 0) {
+        permissions.push({ pageId: row.dataset.pageId, actions });
+      }
+    });
+  }
+  return permissions;
+}
+
+async function saveRole() {
+  const name = $('rbacRoleName').value.trim();
+  const desc = $('rbacRoleDesc').value.trim();
+  const permissions = collectPermFromTable();
+  $('rbacRoleError').classList.add('hidden');
+  if (!name) {
+    $('rbacRoleError').textContent = '角色名称不能为空';
+    $('rbacRoleError').classList.remove('hidden');
+    return;
+  }
+  const body = { name, description: desc, permissions };
+  try {
+    if (editingRoleId) {
+      await rbacApi('/roles/' + editingRoleId, { method: 'PUT', body: JSON.stringify(body) });
+      showToast('角色已更新');
+    } else {
+      await rbacApi('/roles', { method: 'POST', body: JSON.stringify(body) });
+      showToast('角色已创建');
+    }
+    closeRoleModal();
+    await loadAndRenderRbac();
+  } catch (err) {
+    $('rbacRoleError').textContent = err.message;
+    $('rbacRoleError').classList.remove('hidden');
+  }
+}
+
+async function deleteRole(role) {
+  const assignedCount = rbacAssignments.filter(a => a.roleId === role.id).length;
+  const hint = assignedCount > 0 ? `，当前有 ${assignedCount} 个用户绑定了该角色，删除后绑定关系将一并清除` : '';
+  if (!confirm(`确定要删除角色「${role.name}」吗${hint}？`)) return;
+  try {
+    await rbacApi('/roles/' + role.id, { method: 'DELETE' });
+    showToast('角色已删除');
+    await loadAndRenderRbac();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+// 邮箱分配弹窗
+function openAssignModal() {
+  $('rbacAssignEmail').value = '';
+  $('rbacAssignError').classList.add('hidden');
+  // 填充分角色下拉
+  const sel = $('rbacAssignRole');
+  sel.innerHTML = rbacRoles.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  if (rbacRoles.length === 0) {
+    $('rbacAssignError').textContent = '请先创建角色';
+    $('rbacAssignError').classList.remove('hidden');
+  }
+  $('rbacAssignModal').classList.remove('hidden');
+  setTimeout(() => $('rbacAssignEmail').focus(), 50);
+}
+
+function closeAssignModal() {
+  $('rbacAssignModal').classList.add('hidden');
+}
+
+async function addAssignment() {
+  const email = $('rbacAssignEmail').value.trim();
+  const roleId = $('rbacAssignRole').value;
+  $('rbacAssignError').classList.add('hidden');
+  if (!email) {
+    $('rbacAssignError').textContent = '邮箱不能为空';
+    $('rbacAssignError').classList.remove('hidden');
+    return;
+  }
+  if (!roleId) {
+    $('rbacAssignError').textContent = '请选择角色';
+    $('rbacAssignError').classList.remove('hidden');
+    return;
+  }
+  try {
+    await rbacApi('/assignments', { method: 'POST', body: JSON.stringify({ email, roleId }) });
+    showToast('角色已分配');
+    closeAssignModal();
+    await loadAndRenderRbac();
+  } catch (err) {
+    $('rbacAssignError').textContent = err.message;
+    $('rbacAssignError').classList.remove('hidden');
+  }
+}
+
+async function removeAssignment(a) {
+  if (!confirm(`确定要移除「${a.email}」的角色绑定吗？`)) return;
+  try {
+    await rbacApi('/assignments/' + encodeURIComponent(a.email) + '/' + a.roleId, { method: 'DELETE' });
+    showToast('已移除');
+    await loadAndRenderRbac();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+// RBAC 弹窗事件绑定
+$('rbacNewRoleBtn').addEventListener('click', () => openRoleModal());
+$('rbacRoleModalClose').addEventListener('click', closeRoleModal);
+$('rbacRoleCancelBtn').addEventListener('click', closeRoleModal);
+$('rbacRoleModal').addEventListener('click', e => { if (e.target === $('rbacRoleModal')) closeRoleModal(); });
+$('rbacRoleSaveBtn').addEventListener('click', saveRole);
+$('rbacPermAll').addEventListener('change', () => {
+  const isAll = $('rbacPermAll').checked;
+  $('rbacPermTable').classList.toggle('rbac-perm-all-mode', isAll);
+  // 显示/隐藏通配提示
+  let hint = $('rbacPermAllHint');
+  if (isAll && !hint) {
+    hint = document.createElement('p');
+    hint.id = 'rbacPermAllHint';
+    hint.className = 'rbac-perm-all-hint';
+    hint.textContent = '✓ 后续新增的页面也会自动继承以上勾选的权限';
+    $('rbacPermTable').parentNode.insertBefore(hint, $('rbacPermTable').nextSibling);
+  } else if (!isAll && hint) {
+    hint.remove();
+  }
+  if (isAll) {
+    // 全选模式下所有行 checkbox 禁用并全选
+    $('rbacPermTable').querySelectorAll('.perm-act').forEach(cb => { cb.checked = true; cb.disabled = true; });
+  } else {
+    $('rbacPermTable').querySelectorAll('.perm-act').forEach(cb => { cb.disabled = false; });
+  }
+});
+
+$('rbacNewAssignBtn').addEventListener('click', () => openAssignModal());
+$('rbacAssignModalClose').addEventListener('click', closeAssignModal);
+$('rbacAssignCancelBtn').addEventListener('click', closeAssignModal);
+$('rbacAssignModal').addEventListener('click', e => { if (e.target === $('rbacAssignModal')) closeAssignModal(); });
+$('rbacAssignSaveBtn').addEventListener('click', addAssignment);
 
 // ---------- Markdown 右侧原地编辑 ----------
 function enterMdEdit() {
@@ -657,7 +1033,7 @@ $('confirmDelete').addEventListener('click', async () => {
 // ---------- 弹窗内自定义页面文件管理 ----------
 async function loadModalFiles(pageId) {
   try {
-    const res = await fetch('/hilbert-api/pages/' + pageId + '/files', {
+    const res = await authenticatedFetch('/hilbert-api/pages/' + pageId + '/files', {
       headers: { 'Content-Type': 'application/json' }
     });
     customFiles = await res.json();
@@ -708,7 +1084,7 @@ async function uploadModalFiles() {
   const formData = new FormData();
   for (const f of files) formData.append('files', f);
   try {
-    const res = await fetch('/hilbert-api/pages/' + editingId + '/upload', { method: 'POST', body: formData });
+    const res = await authenticatedFetch('/hilbert-api/pages/' + editingId + '/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '上传失败');
     showToast('已上传 ' + data.uploaded.length + ' 个文件');
@@ -725,7 +1101,7 @@ async function uploadModalFiles() {
 async function deleteModalFile(pageId, filename) {
   if (!confirm('确定要删除文件「' + filename + '」吗？')) return;
   try {
-    const res = await fetch('/hilbert-api/pages/' + pageId + '/files/' + encodeURIComponent(filename), { method: 'DELETE' });
+    const res = await authenticatedFetch('/hilbert-api/pages/' + pageId + '/files/' + encodeURIComponent(filename), { method: 'DELETE' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '删除失败');
     showToast('文件已删除');
@@ -807,6 +1183,28 @@ async function refresh() {
 
 async function init() {
   try {
+    // 加载当前用户信息（Google 账号）+ 管理员状态 + 权限
+    const meRes = await authenticatedFetch('/hilbert-api/me');
+    if (meRes.ok) {
+      const me = await meRes.json();
+      if (me.picture) {
+        userAvatar.src = me.picture;
+        userAvatar.alt = me.name || '';
+      }
+      userName.textContent = me.name || 'Admin';
+      userEmail.textContent = me.email || '';
+      isAdmin = !!me.isAdmin;
+    }
+    // 加载权限
+    const permRes = await authenticatedFetch('/hilbert-api/my-permissions');
+    if (permRes.ok) {
+      const permData = await permRes.json();
+      isAdmin = !!permData.isAdmin;
+      myPermissions = permData.permissions;
+    }
+  } catch (_) { /* 用户信息加载失败不影响主流程 */ }
+
+  try {
     [pages, groups] = await Promise.all([api(''), groupsApi()]);
   } catch (err) {
     topbarName.textContent = '加载失败：' + err.message;
@@ -817,10 +1215,18 @@ async function init() {
 
   // 加载版本号
   try {
-    const vRes = await fetch('/hilbert-api/version', { headers: { 'Content-Type': 'application/json' } });
+    const vRes = await authenticatedFetch('/hilbert-api/version', { headers: { 'Content-Type': 'application/json' } });
     const vData = await vRes.json();
     $('versionBadge').textContent = 'v' + vData.version;
   } catch (_) { /* ignore */ }
 }
 
 init();
+
+// ---------- 登出 ----------
+logoutBtn.addEventListener('click', async () => {
+  try {
+    await authenticatedFetch('/hilbert-api/logout', { method: 'POST' });
+  } catch (_) {}
+  window.location.href = '/login.html';
+});

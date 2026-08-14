@@ -7,10 +7,32 @@ const https = require('https');
 const zlib = require('zlib');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
+const jwt = require('jsonwebtoken');
+const { ProxyAgent, fetch: proxyFetch } = require('undici');
+const config = require('./config');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// 隐藏技术栈信息：禁止 Express 自动添加 X-Powered-By 头（防指纹识别）
+app.disable('x-powered-by');
+
+// 安全响应头：在所有响应中设置（代理转发会由 handleProxyRequest 的 writeHead 覆盖，
+// 自动剥离不适用的头如 X-Frame-Options，保证 iframe 嵌入不受影响）
+app.use((req, res, next) => {
+  // 防 Clickjacking：登录页 DENY（禁止被嵌入），其他页面 SAMEORIGIN
+  res.setHeader('X-Frame-Options', req.path === '/login.html' ? 'DENY' : 'SAMEORIGIN');
+  // 防 MIME 类型嗅探：浏览器不得猜测响应类型
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // XSS 过滤（旧浏览器兜底）
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Referer 策略：仅发送 origin，不泄露完整路径（保护代理路径结构）
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // 限制浏览器功能：禁用不需要的 API（摄像头/麦克风/地理位置等）
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 // 出方向代理连接池：复用与目标站的 TCP/TLS 连接，避免每个请求重新三次握手
 const httpAgent = new http.Agent({ keepAlive: true });
@@ -19,6 +41,10 @@ const httpsAgent = new https.Agent({ keepAlive: true });
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
+const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+
+// 超级管理员邮箱（从 config.js 读取）
+const ADMIN_EMAIL = (config.admin_email || '').toLowerCase();
 
 // 支持的页面类型：link = iframe 嵌入外部链接，markdown = 渲染 Markdown 文档
 const PAGE_TYPES = ['link', 'markdown', 'custom'];
@@ -35,21 +61,336 @@ const DEFAULT_PAGES = [
   }
 ];
 
+// 健康检查：供容器编排（Docker HEALTHCHECK / K8s 探针）使用（必须在认证中间件之前，否则探针失败）
+app.get('/hilbert-api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// ---------- Google SSO 认证 ----------
+
+const GOOGLE_CONFIG = config.google;
+
+// Google API 出站代理 dispatcher（国内服务器换取 token / 获取用户信息时需走代理）
+const googleApiDispatcher = GOOGLE_CONFIG.api_proxy
+  ? new ProxyAgent(GOOGLE_CONFIG.api_proxy)
+  : undefined;
+
+// state 采用签名令牌（HMAC）：自包含、无状态，服务器重启不丢失
+// 生成：随机 nonce + 时间戳 → HMAC 签名 → 拼接为 state 字符串
+// 校验：验证签名 + 检查时间戳是否在有效期内
+function generateStateToken() {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const ts = Date.now().toString(36);
+  const payload = nonce + '.' + ts;
+  const sig = crypto.createHmac('sha256', GOOGLE_CONFIG.jwt_secret).update(payload).digest('hex');
+  return payload + '.' + sig;
+}
+
+function verifyStateToken(state) {
+  if (!state || typeof state !== 'string') return false;
+  const parts = state.split('.');
+  if (parts.length !== 3) return false;
+  const [nonce, tsHex, sig] = parts;
+  const payload = nonce + '.' + tsHex;
+  const expected = crypto.createHmac('sha256', GOOGLE_CONFIG.jwt_secret).update(payload).digest('hex');
+  if (sig !== expected) return false;
+  const ts = parseInt(tsHex, 36);
+  if (isNaN(ts) || Date.now() - ts > 10 * 60 * 1000) return false; // 10 分钟有效
+  return true;
+}
+
+// 登录入口：生成随机 state，拼接 Google OAuth2 授权 URL 并重定向
+app.get('/auth/google', (req, res) => {
+  const state = generateStateToken();
+
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CONFIG.client_id,
+    redirect_uri: GOOGLE_CONFIG.oauth2_redirect_uri,
+    response_type: GOOGLE_CONFIG.oauth2_response_type,
+    scope: GOOGLE_CONFIG.oauth2_scope,
+    access_type: GOOGLE_CONFIG.oauth2_access_type,
+    include_granted_scopes: String(GOOGLE_CONFIG.oauth2_include_granted_scopes),
+    state
+  });
+
+  res.redirect(GOOGLE_CONFIG.oauth2_url + '?' + params.toString());
+});
+
+// Google 回调：校验 state → 换取 token → 获取用户信息 → 签发 JWT → 写入 Cookie
+app.get('/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+
+    // 校验 state 防 CSRF（签名验证，无需服务端存储）
+    if (!verifyStateToken(state)) {
+      return res.status(403).send('Invalid state parameter');
+    }
+    // state 为签名令牌，无需服务端删除（无状态）
+
+    if (!code) {
+      return res.status(400).send('Authorization code missing');
+    }
+
+    // 用 authorization code 换取 access_token（通过代理访问 Google API）
+    const tokenRes = await proxyFetch(GOOGLE_CONFIG.token_url, {
+      method: 'POST',
+      dispatcher: googleApiDispatcher,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CONFIG.client_id,
+        client_secret: GOOGLE_CONFIG.client_secret,
+        redirect_uri: GOOGLE_CONFIG.oauth2_redirect_uri,
+        grant_type: 'authorization_code'
+      }).toString()
+    });
+
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      console.error('Token exchange failed:', errText);
+      return res.status(500).send('Failed to exchange authorization code');
+    }
+
+    const tokenData = await tokenRes.json();
+    const accessToken = tokenData.access_token;
+
+    // 用 access_token 获取用户信息（通过代理访问 Google API）
+    const userRes = await proxyFetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      dispatcher: googleApiDispatcher,
+      headers: { Authorization: 'Bearer ' + accessToken }
+    });
+
+    if (!userRes.ok) {
+      return res.status(500).send('Failed to fetch user info');
+    }
+
+    const user = await userRes.json();
+
+    // 登录权限校验：先检查邮箱白名单，再检查域名白名单
+    const userEmail = (user.email || '').toLowerCase();
+    const allowedEmails = (GOOGLE_CONFIG.allowed_emails || '')
+      .split(',')
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean);
+    const allowedDomain = (GOOGLE_CONFIG.allowed_domain || '').trim().toLowerCase();
+
+    if (allowedEmails.length > 0) {
+      // 配置了具体邮箱白名单：只允许列表中的邮箱登录
+      if (!allowedEmails.includes(userEmail)) {
+        console.warn('Login denied: email not in whitelist:', userEmail);
+        return res.status(403).send('您的账号 (' + user.email + ') 未被授权登录');
+      }
+    } else if (allowedDomain) {
+      // 配置了域名白名单：只允许该域名下的邮箱登录
+      if (!userEmail.endsWith('@' + allowedDomain)) {
+        console.warn('Login denied: domain not allowed:', userEmail);
+        return res.status(403).send('仅允许 @' + allowedDomain + ' 域名下的账号登录');
+      }
+    }
+
+    // 签发 JWT
+    const jwtPayload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      picture: user.picture
+    };
+    const token = jwt.sign(jwtPayload, GOOGLE_CONFIG.jwt_secret, {
+      expiresIn: GOOGLE_CONFIG.jwt_expire_hours + 'h'
+    });
+
+    // 将 JWT 写入 HttpOnly Cookie
+    const isSecure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
+    res.cookie('hilbert_token', token, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: GOOGLE_CONFIG.jwt_expire_hours * 60 * 60 * 1000
+    });
+
+    res.redirect('/');
+  } catch (err) {
+    console.error('Callback error:', err);
+    res.status(500).send('Authentication failed');
+  }
+});
+
+// 全局认证中间件：校验 Cookie 中的 JWT
+app.use((req, res, next) => {
+  // 白名单：静态资源（防止页面样式丢失）
+  const ext = path.extname(req.path);
+  if (ext && /^\.(css|js|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|eot|otf|mp3|mp4|webm|ogg|wav|pdf|xml|json|map)$/.test(ext)) {
+    return next();
+  }
+
+  // 白名单：认证相关路由及登录页
+  if (req.path === '/auth/google' || req.path === '/callback' || req.path === '/login.html') {
+    return next();
+  }
+
+  // 白名单：健康检查（Docker 探针）
+  if (req.path === '/hilbert-api/health') {
+    return next();
+  }
+
+  // 校验 JWT（手动解析 Cookie，避免额外依赖）
+  const cookieHeader = req.headers.cookie || '';
+  const tokenMatch = cookieHeader.match(/(?:^|;\s*)hilbert_token=([^;]+)/);
+  const token = tokenMatch ? decodeURIComponent(tokenMatch[1]) : null;
+  if (!token) {
+    if (req.path.startsWith('/hilbert-api/')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return res.redirect('/login.html');
+  }
+
+  try {
+    const decoded = jwt.verify(token, GOOGLE_CONFIG.jwt_secret);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    // Token 过期或无效，清除 Cookie
+    res.clearCookie('hilbert_token', { path: '/' });
+    if (req.path.startsWith('/hilbert-api/')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return res.redirect('/login.html');
+  }
+});
+
+// 版本号（在认证中间件之后，受 JWT 保护）
+app.get('/hilbert-api/version', (req, res) => {
+  const pkg = require('./package.json');
+  res.json({ version: pkg.version });
+});
+
+// 当前登录用户信息（从 JWT 中提取）
+app.get('/hilbert-api/me', (req, res) => {
+  res.json({
+    name: req.user.name || req.user.email,
+    email: req.user.email,
+    picture: req.user.picture || null,
+    isAdmin: isAdmin(req.user.email)
+  });
+});
+
+// 当前用户权限查询
+app.get('/hilbert-api/my-permissions', (req, res) => {
+  const email = req.user.email;
+  res.json({
+    isAdmin: isAdmin(email),
+    permissions: getUserPermissions(email)
+  });
+});
+
+// 登出：清除 JWT Cookie
+app.post('/hilbert-api/logout', (req, res) => {
+  res.clearCookie('hilbert_token', { path: '/' });
+  res.json({ ok: true });
+});
+
 // 只对 /hilbert-api 路由解析 JSON 请求体：不能全局注册，否则会提前消费代理请求的
 // application/json 请求体，导致代理永久挂起（如 Grafana 的 /api/ds/query）
 app.use('/hilbert-api', express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 健康检查：供容器编排（Docker HEALTHCHECK / K8s 探针）使用
-app.get('/hilbert-api/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
+// ---------- RBAC：角色与权限数据存储 ----------
 
-// 版本号
-app.get('/hilbert-api/version', (req, res) => {
-  const pkg = require('./package.json');
-  res.json({ version: pkg.version });
-});
+function ensureRolesFile() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(ROLES_FILE)) {
+    fs.writeFileSync(ROLES_FILE, JSON.stringify({ roles: [], assignments: [] }, null, 2), 'utf8');
+  }
+}
+
+let rolesCache = null;
+
+function readRoles() {
+  if (rolesCache) return rolesCache;
+  ensureRolesFile();
+  try {
+    rolesCache = JSON.parse(fs.readFileSync(ROLES_FILE, 'utf8'));
+    if (!Array.isArray(rolesCache.roles)) rolesCache.roles = [];
+    if (!Array.isArray(rolesCache.assignments)) rolesCache.assignments = [];
+    return rolesCache;
+  } catch (err) {
+    console.error('读取角色配置失败:', err.message);
+    return { roles: [], assignments: [] };
+  }
+}
+
+function writeRoles(data) {
+  ensureRolesFile();
+  fs.writeFileSync(ROLES_FILE, JSON.stringify(data, null, 2), 'utf8');
+  rolesCache = data;
+}
+
+// ---------- RBAC：权限计算 ----------
+
+const ALL_ACTIONS = ['read', 'create', 'update', 'delete'];
+
+function isAdmin(email) {
+  return (email || '').toLowerCase() === ADMIN_EMAIL;
+}
+
+// 邮箱通配符匹配：支持 *@domain.com 等通配模式
+// pattern 含 * 时按通配匹配（* 匹配任意字符），否则精确匹配
+function emailMatchesPattern(email, pattern) {
+  const e = (email || '').toLowerCase();
+  const p = (pattern || '').toLowerCase();
+  if (!p.includes('*')) return e === p;
+  // 将通配模式转为正则：转义特殊字符，* 替换为 .*
+  const regex = '^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+  return new RegExp(regex).test(e);
+}
+
+// 获取用户的所有权限（聚合其所有角色的 permissions，支持邮箱通配符匹配）
+function getUserPermissions(email) {
+  if (isAdmin(email)) {
+    return [{ pageId: '*', actions: [...ALL_ACTIONS] }];
+  }
+  const data = readRoles();
+  const userEmail = (email || '').toLowerCase();
+  // 匹配所有 assignment：精确匹配 + 通配符模式匹配
+  const userAssignments = data.assignments.filter(a => emailMatchesPattern(userEmail, a.email));
+  const permMap = new Map(); // pageId -> Set of actions
+  for (const assignment of userAssignments) {
+    const role = data.roles.find(r => r.id === assignment.roleId);
+    if (!role || !Array.isArray(role.permissions)) continue;
+    for (const perm of role.permissions) {
+      if (!permMap.has(perm.pageId)) permMap.set(perm.pageId, new Set());
+      const actions = permMap.get(perm.pageId);
+      for (const a of (perm.actions || [])) actions.add(a);
+    }
+  }
+  const result = [];
+  for (const [pageId, actions] of permMap) {
+    result.push({ pageId, actions: [...actions] });
+  }
+  return result;
+}
+
+// 检查用户是否对指定页面有指定操作权限
+function hasPermission(email, pageId, action) {
+  if (isAdmin(email)) return true;
+  const perms = getUserPermissions(email);
+  for (const p of perms) {
+    // 通配权限 或 精确匹配页面 ID
+    if (p.pageId === '*' || p.pageId === pageId) {
+      if (p.actions.includes(action)) return true;
+    }
+  }
+  return false;
+}
+
+// 管理员校验中间件
+function requireAdmin(req, res, next) {
+  if (isAdmin(req.user.email)) return next();
+  return res.status(403).json({ error: '需要超级管理员权限' });
+}
 
 // ---------- 配置文件读写 ----------
 
@@ -299,15 +640,158 @@ function resolvePage(page) {
   return { ...page, contentPath: page.content, content: text };
 }
 
+// ---------- API：RBAC 角色与权限管理（仅超级管理员） ----------
+
+// 获取所有角色
+app.get('/hilbert-api/rbac/roles', requireAdmin, (req, res) => {
+  const data = readRoles();
+  res.json(data.roles);
+});
+
+// 创建角色
+app.post('/hilbert-api/rbac/roles', requireAdmin, (req, res) => {
+  const { name, description, permissions } = req.body || {};
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: '角色名称不能为空' });
+  }
+  const data = readRoles();
+  if (data.roles.some(r => r.name.trim().toLowerCase() === name.trim().toLowerCase())) {
+    return res.status(400).json({ error: '角色名称已存在' });
+  }
+  // 校验权限格式
+  const validPerms = [];
+  if (Array.isArray(permissions)) {
+    for (const p of permissions) {
+      if (!p.pageId || !Array.isArray(p.actions)) continue;
+      const validActions = p.actions.filter(a => ALL_ACTIONS.includes(a));
+      if (validActions.length > 0) {
+        validPerms.push({ pageId: p.pageId, actions: validActions });
+      }
+    }
+  }
+  const role = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    description: (description || '').trim(),
+    permissions: validPerms
+  };
+  data.roles.push(role);
+  writeRoles(data);
+  res.status(201).json(role);
+});
+
+// 更新角色
+app.put('/hilbert-api/rbac/roles/:id', requireAdmin, (req, res) => {
+  const data = readRoles();
+  const idx = data.roles.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '角色不存在' });
+  const role = data.roles[idx];
+  const { name, description, permissions } = req.body || {};
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: '角色名称不能为空' });
+    if (data.roles.some(r => r.id !== role.id && r.name.trim().toLowerCase() === name.trim().toLowerCase())) {
+      return res.status(400).json({ error: '角色名称已存在' });
+    }
+    role.name = name.trim();
+  }
+  if (description !== undefined) role.description = description.trim();
+  if (permissions !== undefined && Array.isArray(permissions)) {
+    const validPerms = [];
+    for (const p of permissions) {
+      if (!p.pageId || !Array.isArray(p.actions)) continue;
+      const validActions = p.actions.filter(a => ALL_ACTIONS.includes(a));
+      if (validActions.length > 0) {
+        validPerms.push({ pageId: p.pageId, actions: validActions });
+      }
+    }
+    role.permissions = validPerms;
+  }
+  data.roles[idx] = role;
+  writeRoles(data);
+  res.json(role);
+});
+
+// 删除角色（同时清理关联的 assignment）
+app.delete('/hilbert-api/rbac/roles/:id', requireAdmin, (req, res) => {
+  const data = readRoles();
+  const idx = data.roles.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '角色不存在' });
+  data.roles.splice(idx, 1);
+  // 清理引用该角色的分配
+  data.assignments = data.assignments.filter(a => a.roleId !== req.params.id);
+  writeRoles(data);
+  res.json({ deleted: req.params.id });
+});
+
+// 获取所有分配关系
+app.get('/hilbert-api/rbac/assignments', requireAdmin, (req, res) => {
+  const data = readRoles();
+  res.json(data.assignments);
+});
+
+// 为邮箱分配角色（支持通配符模式，如 *@domain.com）
+app.post('/hilbert-api/rbac/assignments', requireAdmin, (req, res) => {
+  const { email, roleId } = req.body || {};
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: '邮箱不能为空' });
+  }
+  if (!roleId) {
+    return res.status(400).json({ error: '角色不能为空' });
+  }
+  const data = readRoles();
+  if (!data.roles.some(r => r.id === roleId)) {
+    return res.status(404).json({ error: '角色不存在' });
+  }
+  const normalizedEmail = email.trim().toLowerCase();
+  // 通配符格式校验：含 * 时必须是合法模式（如 *@domain.com）
+  if (normalizedEmail.includes('*')) {
+    if (!/^[^@]*\*[^@]*@.+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: '通配符格式不正确，示例：*@domain.com' });
+    }
+  }
+  // 防止重复分配
+  if (data.assignments.some(a => a.email.toLowerCase() === normalizedEmail && a.roleId === roleId)) {
+    return res.status(400).json({ error: '该邮箱已分配此角色' });
+  }
+  const assignment = { email: normalizedEmail, roleId };
+  data.assignments.push(assignment);
+  writeRoles(data);
+  res.status(201).json(assignment);
+});
+
+// 移除邮箱的角色绑定
+app.delete('/hilbert-api/rbac/assignments/:email/:roleId', requireAdmin, (req, res) => {
+  const data = readRoles();
+  const email = decodeURIComponent(req.params.email).toLowerCase();
+  const roleId = req.params.roleId;
+  const before = data.assignments.length;
+  data.assignments = data.assignments.filter(
+    a => !(a.email.toLowerCase() === email && a.roleId === roleId)
+  );
+  if (data.assignments.length === before) {
+    return res.status(404).json({ error: '分配关系不存在' });
+  }
+  writeRoles(data);
+  res.json({ deleted: true });
+});
+
 // ---------- API：页面配置 ----------
 
-// 获取全部页面
+// 获取全部页面（按权限过滤：只返回有 read 权限的页面）
 app.get('/hilbert-api/pages', (req, res) => {
-  res.json(readPages().map(resolvePage));
+  const email = req.user.email;
+  const allPages = readPages().map(resolvePage);
+  if (isAdmin(email)) return res.json(allPages);
+  const filtered = allPages.filter(p => hasPermission(email, p.id, 'read'));
+  res.json(filtered);
 });
 
 // 新增页面
 app.post('/hilbert-api/pages', (req, res) => {
+  // 权限校验：需要全局 create 权限
+  if (!hasPermission(req.user.email, '*', 'create')) {
+    return res.status(403).json({ error: '没有创建页面的权限' });
+  }
   const { type = 'link', name, url, icon, group, content, auth, proxyMode } = req.body || {};
   if (!PAGE_TYPES.includes(type)) {
     return res.status(400).json({ error: '不支持的页面类型' });
@@ -361,6 +845,10 @@ app.post('/hilbert-api/pages', (req, res) => {
 
 // 更新页面
 app.put('/hilbert-api/pages/:id', (req, res) => {
+  // 权限校验：需要该页面的 update 权限
+  if (!hasPermission(req.user.email, req.params.id, 'update')) {
+    return res.status(403).json({ error: '没有修改该页面的权限' });
+  }
   const pages = readPages();
   const idx = pages.findIndex(p => p.id === req.params.id);
   if (idx === -1) {
@@ -438,6 +926,10 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
 
 // 删除页面
 app.delete('/hilbert-api/pages/:id', (req, res) => {
+  // 权限校验：需要该页面的 delete 权限
+  if (!hasPermission(req.user.email, req.params.id, 'delete')) {
+    return res.status(403).json({ error: '没有删除该页面的权限' });
+  }
   const pages = readPages();
   const idx = pages.findIndex(p => p.id === req.params.id);
   if (idx === -1) {
@@ -454,6 +946,10 @@ app.delete('/hilbert-api/pages/:id', (req, res) => {
 
 // 上传文件（支持多文件 + zip 包）
 app.post('/hilbert-api/pages/:id/upload', (req, res) => {
+  // 权限校验：需要该页面的 update 权限
+  if (!hasPermission(req.user.email, req.params.id, 'update')) {
+    return res.status(403).json({ error: '没有修改该页面的权限' });
+  }
   upload.array('files', 50)(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     handleCustomUpload(req, res);
@@ -472,6 +968,10 @@ app.get('/hilbert-api/pages/:id/files', (req, res) => {
 
 // 删除单个文件
 app.delete('/hilbert-api/pages/:id/files/:filename', (req, res) => {
+  // 权限校验：需要该页面的 update 权限
+  if (!hasPermission(req.user.email, req.params.id, 'update')) {
+    return res.status(403).json({ error: '没有修改该页面的权限' });
+  }
   const filename = path.basename(req.params.filename);
   if (!filename || filename.startsWith('.')) return res.status(400).json({ error: '文件名不合法' });
   const page = readPages().find(p => p.id === req.params.id && p.type === 'custom');
@@ -514,8 +1014,8 @@ app.get('/hilbert-api/groups', (req, res) => {
   res.json(readGroups());
 });
 
-// 新增分组
-app.post('/hilbert-api/groups', (req, res) => {
+// 新增分组（仅超级管理员）
+app.post('/hilbert-api/groups', requireAdmin, (req, res) => {
   const name = ((req.body || {}).name || '').trim();
   if (!name) {
     return res.status(400).json({ error: '分组名称不能为空' });
@@ -532,8 +1032,8 @@ app.post('/hilbert-api/groups', (req, res) => {
   res.status(201).json(groups);
 });
 
-// 删除分组（该分组下的页面移至未分组）
-app.delete('/hilbert-api/groups/:name', (req, res) => {
+// 删除分组（该分组下的页面移至未分组，仅超级管理员）
+app.delete('/hilbert-api/groups/:name', requireAdmin, (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const groups = readGroups();
   const idx = groups.indexOf(name);

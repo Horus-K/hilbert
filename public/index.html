@@ -40,8 +40,14 @@
 
       <div class="sidebar-footer">
         <div class="user-chip">
-          <div class="avatar">A</div>
-          <span>Admin</span>
+          <img class="avatar-img" id="userAvatar" src="" alt="" />
+          <div class="user-info">
+            <span class="user-name" id="userName">Admin</span>
+            <span class="user-email" id="userEmail"></span>
+          </div>
+          <button class="logout-btn" id="logoutBtn" title="登出">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
         </div>
       </div>
     </aside>
@@ -120,6 +126,30 @@
             </div>
             <div class="form-error hidden" id="groupError"></div>
             <ul class="group-list" id="groupList"></ul>
+          </div>
+
+          <!-- RBAC 权限管理（仅超级管理员可见） -->
+          <div class="settings-card hidden" id="rbacPanel">
+            <h2>🔐 权限管理</h2>
+            <p class="settings-desc">基于角色的访问控制（RBAC）：创建角色并分配页面权限，然后将角色绑定到用户邮箱。超级管理员拥有所有权限。</p>
+
+            <!-- 角色列表 -->
+            <div class="rbac-section">
+              <div class="rbac-section-header">
+                <h3>角色列表</h3>
+                <button class="primary-btn" id="rbacNewRoleBtn">＋ 新建角色</button>
+              </div>
+              <div class="rbac-role-list" id="rbacRoleList"><!-- 动态渲染 --></div>
+            </div>
+
+            <!-- 邮箱分配 -->
+            <div class="rbac-section">
+              <div class="rbac-section-header">
+                <h3>邮箱分配</h3>
+                <button class="primary-btn" id="rbacNewAssignBtn">＋ 分配角色</button>
+              </div>
+              <div class="rbac-assign-list" id="rbacAssignList"><!-- 动态渲染 --></div>
+            </div>
           </div>
         </div>
       </section>
@@ -229,6 +259,69 @@
       <div class="form-actions">
         <button class="ghost-btn" id="confirmCancel">取消</button>
         <button class="danger-btn" id="confirmDelete">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RBAC 角色编辑弹窗 -->
+  <div class="modal-overlay hidden" id="rbacRoleModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3 id="rbacRoleModalTitle">新建角色</h3>
+        <button class="icon-btn" id="rbacRoleModalClose" title="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="rbac-role-form">
+        <div class="form-item">
+          <label>角色名称 <span class="required">*</span></label>
+          <input type="text" id="rbacRoleName" placeholder="例如：访客、编辑者" maxlength="20" />
+        </div>
+        <div class="form-item">
+          <label>角色描述</label>
+          <input type="text" id="rbacRoleDesc" placeholder="可选的角色描述" maxlength="60" />
+        </div>
+        <div class="form-item">
+          <label>页面权限</label>
+          <p class="form-hint">勾选每个页面对应的操作权限。勾选「全部页面」后，后续新增的页面也会自动继承所选权限。</p>
+          <div class="rbac-perm-header">
+            <label class="checkbox-label"><input type="checkbox" id="rbacPermAll" /> 全部页面</label>
+          </div>
+          <div class="rbac-perm-table" id="rbacPermTable"><!-- 动态渲染 --></div>
+        </div>
+        <div class="form-error hidden" id="rbacRoleError"></div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="rbacRoleCancelBtn">取消</button>
+          <button type="button" class="primary-btn" id="rbacRoleSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RBAC 邮箱分配弹窗 -->
+  <div class="modal-overlay hidden" id="rbacAssignModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>分配角色给用户</h3>
+        <button class="icon-btn" id="rbacAssignModalClose" title="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="rbac-assign-form">
+        <div class="form-item">
+          <label>用户邮箱 <span class="required">*</span></label>
+          <input type="text" id="rbacAssignEmail" placeholder="user@abel.ai 或 *@domain.com（通配符）" />
+          <p class="form-hint">支持通配符，如 <code>*@domain.com</code> 匹配该域名下所有用户</p>
+        </div>
+        <div class="form-item">
+          <label>选择角色 <span class="required">*</span></label>
+          <select id="rbacAssignRole"></select>
+        </div>
+        <div class="form-error hidden" id="rbacAssignError"></div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="rbacAssignCancelBtn">取消</button>
+          <button type="button" class="primary-btn" id="rbacAssignSaveBtn">分配</button>
+        </div>
       </div>
     </div>
   </div>

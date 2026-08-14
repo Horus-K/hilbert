@@ -1,5 +1,32 @@
 # 更新日志
 
+## v1.2.0
+
+新增 Google SSO 单点登录、RBAC 权限管理、环境变量配置。
+
+### 新增
+
+- **Google SSO 认证**：基于 Google OAuth2 的登录流程，JWT 会话管理，支持邮箱白名单（按域名或具体邮箱限制登录）
+- **RBAC 权限管理**：
+  - 基于角色的访问控制，支持自定义角色并分配页面级权限（查看/新增/修改/删除）
+  - 支持将角色分配给指定邮箱，支持通配符邮箱模式（如 `*@domain.com`）
+  - 超级管理员拥有全部权限并可管理 RBAC 配置，仅管理员可访问设置页
+  - 权限感知渲染：侧边栏、操作按钮根据当前用户权限动态显示/隐藏
+- **环境变量配置**：所有敏感配置（OAuth 凭据、JWT 密钥、管理员邮箱等）统一通过环境变量管理，支持 `.env` 文件或系统环境变量
+- **新增 API**：
+  - `GET /hilbert-api/me` — 当前用户信息
+  - `GET /hilbert-api/my-permissions` — 当前用户权限
+  - `GET/POST/PUT/DELETE /hilbert-api/rbac/roles` — 角色管理
+  - `GET/POST/DELETE /hilbert-api/rbac/assignments` — 邮箱-角色分配管理
+
+### 变更
+
+- 配置方式从 `config.js` 硬编码默认值改为 `.env` 环境变量，敏感信息不再出现在代码中
+- 页面 API（GET/POST/PUT/DELETE）增加权限校验中间件
+- 分组管理 API（POST/DELETE）限制为仅超级管理员可操作
+- 新增依赖：`dotenv`（环境变量加载）、`jsonwebtoken`（JWT 会话）、`undici`（Google API 出站代理）
+- Dockerfile 新增 `config.js` 复制
+
 ## v1.1.0
 
 新增自定义前端页面类型、文件管理弹窗化、SVG favicon、侧边栏版本号。

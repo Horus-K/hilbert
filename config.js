@@ -3,8 +3,8 @@ require('dotenv').config();
 
 // 配置项全部从环境变量读取，敏感信息不硬编码
 module.exports = {
-  // 超级管理员邮箱：拥有所有页面的所有权限，且是唯一能访问 RBAC 权限配置的用户
-  admin_email: process.env.ADMIN_EMAIL || '',
+  // 超级管理员邮箱列表（逗号分隔）：拥有所有页面的所有权限，且是唯一能访问 RBAC 权限配置的用户
+  admin_emails: (process.env.ADMIN_EMAIL || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
   google: {
     client_id: process.env.GOOGLE_CLIENT_ID || '',
     client_secret: process.env.GOOGLE_CLIENT_SECRET || '',

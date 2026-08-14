@@ -55,7 +55,7 @@ cp .env.example .env
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `PORT` | 否 | 服务监听端口，默认 `3000` |
-| `ADMIN_EMAIL` | ✅ | 超级管理员邮箱，拥有所有权限且可访问 RBAC 配置 |
+| `ADMIN_EMAIL` | ✅ | 超级管理员邮箱（多人用逗号分隔），拥有所有权限且可访问 RBAC 配置 |
 
 #### Google OAuth2
 
@@ -128,7 +128,7 @@ metadata:
   name: hilbert-config
 data:
   PORT: "3000"
-  ADMIN_EMAIL: "admin@example.com"
+  ADMIN_EMAIL: "admin@example.com,boss@example.com"
   GOOGLE_CLIENT_ID: "your-client-id.apps.googleusercontent.com"
   GOOGLE_REDIRECT_URI: "https://your-domain.com/callback?type=google"
   GOOGLE_OAUTH2_SCOPE: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"

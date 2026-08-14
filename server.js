@@ -37,16 +37,23 @@ app.use((req, res, next) => {
 // 出方向代理连接池：复用与目标站的 TCP/TLS 连接，避免每个请求重新三次握手
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
+// DNS 覆盖专用 agent：连接 IP 时跳过证书校验（证书是原始域名的，与 IP 不匹配）
+const httpsAgentNoVerify = new https.Agent({ keepAlive: true, rejectUnauthorized: false });
 
-// DNS 覆盖：当页面配置了 resolveIp 时，返回自定义 lookup 函数，
-// 让 HTTP 请求直接连接指定 IP 而非通过 DNS 解析域名
-function getDnsLookup(page) {
-  if (!page || !page.resolveIp) return undefined;
+// DNS 覆盖：当页面配置了 resolveIp 时，将代理请求的 TCP 连接目标改为指定 IP，
+// 同时保持 Host 头和 TLS SNI 为原始域名（确保虚拟主机路由和证书校验正确）
+function applyDnsOverride(page, targetUrl, base, headers) {
+  if (!page || !page.resolveIp) return {};
   const ip = page.resolveIp;
-  return (hostname, options, callback) => {
-    if (typeof options === 'function') { callback = options; }
-    callback(null, ip, 4);
-  };
+  // 修改目标 URL 的 hostname 为指定 IP
+  targetUrl.hostname = ip;
+  // 显式设置 Host 头为原始域名（虚拟主机路由需要）
+  headers.host = base.host;
+  // HTTPS 时设置 SNI 和证书校验主机名
+  if (base.protocol === 'https:') {
+    return { servername: base.hostname };
+  }
+  return {};
 }
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -1138,9 +1145,14 @@ function performLogin(page, base) {
         'Accept': 'application/json'
       }
     };
-    const loginLookup = getDnsLookup(page);
-    if (loginLookup) loginOpts.lookup = loginLookup;
-    const loginReq = lib.request(base.origin + auth.loginPath, loginOpts, loginRes => {
+    // DNS 覆盖
+    const loginUrl = new URL(base.origin + auth.loginPath);
+    const loginDnsOpts = applyDnsOverride(page, loginUrl, base, loginOpts.headers);
+    Object.assign(loginOpts, loginDnsOpts);
+    if (page.resolveIp && base.protocol === 'https:') {
+      loginOpts.agent = httpsAgentNoVerify;
+    }
+    const loginReq = lib.request(loginUrl, loginOpts, loginRes => {
       const setCookies = loginRes.headers['set-cookie'] || [];
       const chunks = [];
       loginRes.on('data', c => chunks.push(c));
@@ -1368,11 +1380,13 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
       await applyAuthHeaders(page, headers);
 
       await new Promise((resolve, reject) => {
-        const agent = base.protocol === 'https:' ? httpsAgent : httpAgent;
-        const lookup = getDnsLookup(page);
-        const reqOpts = { method: req.method, headers, agent };
-        if (lookup) reqOpts.lookup = lookup;
-        const proxyReq = lib.request(target, reqOpts, proxyRes => {
+        const hasDnsOverride = !!(page && page.resolveIp);
+        const agent = base.protocol === 'https:' ? (hasDnsOverride ? httpsAgentNoVerify : httpsAgent) : httpAgent;
+        // DNS 覆盖：将目标 URL 的 hostname 替换为指定 IP
+        const targetUrl = new URL(target);
+        const dnsOpts = applyDnsOverride(page, targetUrl, base, headers);
+        const reqOpts = { method: req.method, headers, agent, ...dnsOpts };
+        const proxyReq = lib.request(targetUrl, reqOpts, proxyRes => {
           // login 模式会话过期检测：401 或被重定向到登录页 → 重新登录后重试一次
           const expired = auth && auth.mode === 'login' && !isRetry && (
             proxyRes.statusCode === 401 ||
@@ -1625,10 +1639,14 @@ server.on('upgrade', async (req, socket, head) => {
     await applyAuthHeaders(page, headers);
 
     const lib = base.protocol === 'https:' ? https : http;
-    const wsOpts = { method: 'GET', headers };
-    const wsLookup = getDnsLookup(page);
-    if (wsLookup) wsOpts.lookup = wsLookup;
-    const proxyReq = lib.request(target, wsOpts);
+    // DNS 覆盖
+    const wsUrl = new URL(target);
+    const wsDnsOpts = applyDnsOverride(page, wsUrl, base, headers);
+    const wsOpts = { method: 'GET', headers, ...wsDnsOpts };
+    if (page.resolveIp && base.protocol === 'https:') {
+      wsOpts.agent = httpsAgentNoVerify;
+    }
+    const proxyReq = lib.request(wsUrl, wsOpts);
     proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
       // 把目标的 101 响应原样写回客户端，然后双向透传数据帧
       let raw = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;

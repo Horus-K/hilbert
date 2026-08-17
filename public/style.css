@@ -49,11 +49,20 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  transition: margin-left 0.25s ease;
+  transition: left 0.25s ease;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 30;
 }
 
 .sidebar.collapsed {
-  margin-left: calc(-1 * var(--sidebar-width));
+  left: calc(-1 * var(--sidebar-width));
+}
+
+.sidebar:not(.collapsed) {
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
 }
 
 .sidebar-header {
@@ -378,17 +387,38 @@ body {
 .user-chip:hover .logout-btn { opacity: 1; }
 .logout-btn:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
 
-/* 展开按钮（侧边栏收起时） */
+/* 侧边栏 hover 触发区域 */
 
-.sidebar.collapsed ~ .main .topbar {
-  padding-left: 52px;
+.sidebar-trigger {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 25;
+  cursor: ew-resize;
 }
 
-.expand-btn {
+.sidebar-trigger::after {
+  content: '';
   position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 20;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-trigger:hover::after {
+  height: 60px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.sidebar-trigger.hidden {
+  display: none;
 }
 
 /* ================= 主区域 ================= */

@@ -405,6 +405,8 @@ async function duplicatePage(page) {
 // 根据页面类型切换右侧展示：link → iframe，markdown → 渲染文档
 function showPage(page) {
   currentView = 'page';
+  // 点击页面后立即收起侧边栏
+  $('sidebar').classList.add('collapsed');
   welcomeView.classList.add('hidden');
   settingsView.classList.add('hidden');
   reloadBtn.classList.remove('hidden');
@@ -461,6 +463,7 @@ function showPage(page) {
     mainFrame.src = (page.proxyMode === 'mount' ? '/hilbert-proxy/' + page.id + '/' : (pagePath || '/'))
       + (pageUrl.search || '');
   }
+  updateSidebarTrigger();
 }
 
 function renderMarkdown(page) {
@@ -488,6 +491,7 @@ function showWelcome() {
   $('welcomeNewBtn').classList.toggle('hidden', !canCreatePage() && !isAdmin);
   $('welcomeSettingsBtn').classList.toggle('hidden', !isAdmin);
   renderSidebar();
+  updateSidebarTrigger();
 }
 
 function showSettings() {
@@ -498,6 +502,8 @@ function showSettings() {
   }
   if (!confirmDiscardIfEditing()) return;
   currentView = 'settings';
+  // 进入设置页后收起侧边栏
+  $('sidebar').classList.add('collapsed');
   activeId = null;
   exitMdEdit();
   iframeWrap.classList.add('hidden');
@@ -520,6 +526,7 @@ function showSettings() {
     $('rbacPanel').classList.add('hidden');
   }
   renderSidebar();
+  updateSidebarTrigger();
 }
 
 $('settingsEntry').addEventListener('click', showSettings);
@@ -1414,15 +1421,33 @@ $('reloadBtn').addEventListener('click', () => {
   if (page) showPage(page);
 });
 
-// ---------- 侧边栏折叠 ----------
-$('toggleSidebar').addEventListener('click', () => {
-  $('sidebar').classList.add('collapsed');
-  $('expandSidebar').classList.remove('hidden');
+// ---------- 侧边栏 hover 自动展开/收起 ----------
+let sidebarCollapseTimer = null;
+
+function updateSidebarTrigger() {
+  const trigger = $('sidebarTrigger');
+  // 所有页面都显示触发区域，允许 hover 展开侧边栏
+  trigger.classList.remove('hidden');
+}
+
+$('sidebarTrigger').addEventListener('mouseenter', () => {
+  clearTimeout(sidebarCollapseTimer);
+  $('sidebar').classList.remove('collapsed');
 });
 
-$('expandSidebar').addEventListener('click', () => {
-  $('sidebar').classList.remove('collapsed');
-  $('expandSidebar').classList.add('hidden');
+$('sidebarTrigger').addEventListener('mouseleave', () => {
+  // 延迟收起，等待侧边栏滑出动画完成后再判断
+  sidebarCollapseTimer = setTimeout(() => {
+    $('sidebar').classList.add('collapsed');
+  }, 300);
+});
+
+$('sidebar').addEventListener('mouseenter', () => {
+  clearTimeout(sidebarCollapseTimer);
+});
+
+$('sidebar').addEventListener('mouseleave', () => {
+  $('sidebar').classList.add('collapsed');
 });
 
 // ---------- 工具 ----------

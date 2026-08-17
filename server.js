@@ -71,16 +71,7 @@ if (ADMIN_EMAILS.length === 0) {
 const PAGE_TYPES = ['link', 'markdown', 'custom', 'direct'];
 
 // 默认页面配置（首次启动时写入）
-const DEFAULT_PAGES = [
-  {
-    id: 'grafana-main',
-    type: 'link',
-    name: 'Grafana 监控面板',
-    icon: '📊',
-    url: 'https://grafana-sit.abel.ai/dashboard/snapshot/D1QuKevhALazej2ucsYlTL5HQ9Y9hHVP?orgId=0&refresh=10s&from=now-30m&to=now',
-    group: '监控'
-  }
-];
+const DEFAULT_PAGES = [];
 
 // 健康检查：供容器编排（Docker HEALTHCHECK / K8s 探针）使用（必须在认证中间件之前，否则探针失败）
 app.get('/hilbert-api/health', (req, res) => {

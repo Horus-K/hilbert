@@ -1,5 +1,36 @@
 # 更新日志
 
+## v1.4.0
+
+后端架构重构：将 1769 行单体 `server.js` 拆分为 25+ 个模块化文件，采用 Controller-Service-Repository 三层架构。
+
+### 变更
+
+- **后端架构重构**：
+  - 引入三层分层架构：Routes（Controller）→ Services → Repositories，职责清晰、依赖单向
+  - `server.js` 拆分为 25+ 个独立模块文件，最大文件不超过 200 行
+  - 新增 `src/` 目录结构：`config/`、`middleware/`、`routes/`、`services/`、`repositories/`、`proxy/`、`utils/`
+- **代理子系统独立封装**：
+  - 反向代理拆分为独立 `src/proxy/` 子模块，包含连接池、DNS 覆盖、HTML/CSS 重写、会话缓存、WebSocket 透传
+  - 所有高性能机制完整保留，无性能损耗
+- **事件驱动路由刷新**：
+  - 用 `EventEmitter` 替代原 `writePages` monkey-patch，页面变更自动刷新代理路由与自定义页面托管
+- **统一错误处理**：
+  - 新增 `AppError` 业务异常类 + `errorHandler` 中间件，业务层抛错即可自动返回正确状态码
+- **向后兼容**：
+  - 根目录 `server.js` 保持为入口（2 行转发），`npm start` 无需任何修改
+  - 所有外部 API 路径与行为保持不变
+
+### 新增文件
+
+- `src/config/index.js` — 统一配置管理
+- `src/middleware/` — 安全响应头、JWT 认证、管理员守卫
+- `src/routes/` — 6 个路由模块（health、auth、callback、user、rbac、pages、groups、favorites）
+- `src/services/` — 7 个服务模块（auth、rbac、pages、markdown、custom-pages、groups、favorites）
+- `src/repositories/` — 4 个数据访问模块（pages、groups、roles、favorites）
+- `src/proxy/` — 7 个代理模块（agents、rewriter、auth-injector、proxy-handler、route-manager、websocket、index）
+- `src/utils/` — 工具模块（errors、validators、file-utils）
+
 ## v1.3.0
 
 新增分组编辑与拖拽排序、直链页面类型、用户收藏栏、分组折叠功能。

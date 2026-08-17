@@ -135,10 +135,32 @@ body {
 
 .group-title {
   padding: 14px 10px 6px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: 0.5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.group-title:hover {
+  color: var(--text-secondary);
+}
+
+.group-arrow {
+  font-size: 9px;
+  transition: transform 0.2s;
+}
+
+.group-name-text {
+  flex: 1;
+}
+
+.group-content.collapsed {
+  display: none;
 }
 
 .page-item {

@@ -1,5 +1,31 @@
 # 更新日志
 
+## v1.3.0
+
+新增分组编辑与拖拽排序、直链页面类型、用户收藏栏。
+
+### 新增
+
+- **分组管理增强**：
+  - 支持双击编辑分组名称，inline 编辑模式（回车保存 / Esc 取消）
+  - 支持拖拽排序分组顺序（HTML5 Drag & Drop），拖拽完成后自动保存
+  - 新增 API：`PUT /hilbert-api/groups/:name`（重命名）、`PUT /hilbert-api/groups/order`（排序）
+- **直链页面类型 (`direct`)**：点击后在新标签页直接打开目标链接，不走 iframe 嵌入，无需配置认证/代理
+  - 页面类型切换新增「↗️ 直链」选项
+  - 侧边栏显示 `DL` 类型徽标
+  - 页面类型从三种扩展为四种（`link` / `markdown` / `custom` / `direct`）
+- **用户收藏栏**：
+  - 左侧边栏新增「⭐ 收藏」区域，每个用户可独立收藏不同页面
+  - 服务端存储（`data/favorites/<邮箱>.json`），支持跨设备同步
+  - 页面项增加星标按钮 ☆/★，点击切换收藏状态
+  - 收藏区域显示已收藏页面列表，带金色竖条标识，hover 显示取消收藏按钮
+  - 新增 API：`GET/PUT /hilbert-api/favorites`（获取/设置）、`POST /hilbert-api/favorites/toggle`（切换）
+
+### 变更
+
+- 页面类型从三种扩展为四种（`link` / `markdown` / `custom` / `direct`）
+- 分组管理描述文字更新，提示支持拖拽和编辑
+
 ## v1.2.0
 
 新增 Google SSO 单点登录、RBAC 权限管理、环境变量配置。

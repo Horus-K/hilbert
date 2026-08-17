@@ -27,6 +27,15 @@
         新建页面
       </button>
 
+      <!-- 收藏区域 -->
+      <div class="favorites-section" id="favoritesSection">
+        <div class="favorites-title">
+          <span>⭐ 收藏</span>
+          <span class="favorites-count" id="favoritesCount"></span>
+        </div>
+        <div class="favorites-list" id="favoritesList"><!-- 动态渲染 --></div>
+      </div>
+
       <nav class="page-list" id="pageList"><!-- 动态渲染 --></nav>
 
       <button class="settings-entry" id="settingsEntry">
@@ -119,7 +128,7 @@
         <div class="settings-view hidden" id="settingsView">
           <div class="settings-card">
             <h2>分组管理</h2>
-            <p class="settings-desc">分组用于整理左侧边栏中的页面，新建 / 编辑页面时可直接选择分组。删除分组后，其下页面会移至「未分组」。</p>
+            <p class="settings-desc">分组用于整理左侧边栏中的页面，新建 / 编辑页面时可直接选择分组。支持拖拽排序和双击编辑名称。删除分组后，其下页面会移至「未分组」。</p>
             <div class="group-add">
               <input type="text" id="newGroupName" placeholder="输入分组名称" maxlength="20" />
               <button class="primary-btn" id="addGroupBtn">添加分组</button>
@@ -172,8 +181,9 @@
           <label>页面类型</label>
           <div class="type-switch" id="typeSwitch">
             <button type="button" class="type-opt active" data-type="link">🔗 外部链接</button>
-            <button type="button" class="type-opt" data-type="markdown">📝 Markdown 文档</button>
-            <button type="button" class="type-opt" data-type="custom">🖥️ 自定义页面</button>
+            <button type="button" class="type-opt" data-type="direct">↗️ 直链</button>
+            <button type="button" class="type-opt" data-type="markdown">📝 Markdown</button>
+            <button type="button" class="type-opt" data-type="custom">🖥️ 自定义</button>
           </div>
         </div>
         <div class="form-item">

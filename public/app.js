@@ -13,6 +13,8 @@ let myPermissions = null;     // 当前用户权限缓存 [{ pageId, actions }]
 let rbacRoles = [];           // RBAC 角色列表
 let rbacAssignments = [];     // RBAC 分配列表
 let editingRoleId = null;     // 当前编辑的角色 ID（null 为新建）
+let favorites = [];           // 当前用户收藏的页面 ID 列表
+let currentUserEmail = '';    // 当前用户邮箱（用于 localStorage 隔离）
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -28,6 +30,9 @@ const settingsView = $('settingsView');
 const groupList = $('groupList');
 const groupError = $('groupError');
 const newGroupName = $('newGroupName');
+const favoritesSection = $('favoritesSection');
+const favoritesList = $('favoritesList');
+const favoritesCount = $('favoritesCount');
 const reloadBtn = $('reloadBtn');
 const editToggleBtn = $('editToggleBtn');
 const editCancelBtn = $('editCancelBtn');
@@ -110,6 +115,81 @@ function canEditPage(pageId) { return hasPagePermission(pageId, 'update'); }
 function canDeletePage(pageId) { return hasPagePermission(pageId, 'delete'); }
 function canReadPage(pageId) { return hasPagePermission(pageId, 'read'); }
 
+// ---------- 收藏功能 ----------
+async function favoritesApi(path = '', options = {}) {
+  const res = await authenticatedFetch('/hilbert-api/favorites' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
+  return data;
+}
+
+async function loadFavorites() {
+  try {
+    favorites = await favoritesApi();
+    if (!Array.isArray(favorites)) favorites = [];
+  } catch { favorites = []; }
+}
+
+async function toggleFavorite(pageId) {
+  try {
+    favorites = await favoritesApi('/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ pageId })
+    });
+    renderFavorites();
+    renderSidebar();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function isFavorited(pageId) {
+  return favorites.includes(pageId);
+}
+
+function renderFavorites() {
+  favoritesList.innerHTML = '';
+  // 过滤掉已不存在的页面
+  const favPages = favorites.map(id => pages.find(p => p.id === id)).filter(Boolean);
+  // 过滤无 read 权限的页面
+  const visiblePages = favPages.filter(p => isAdmin || canReadPage(p.id));
+  favoritesCount.textContent = visiblePages.length || '';
+  if (visiblePages.length === 0) {
+    favoritesSection.classList.add('empty');
+    const hint = document.createElement('div');
+    hint.className = 'favorites-empty-hint';
+    hint.textContent = '点击页面星标添加收藏';
+    favoritesList.appendChild(hint);
+    return;
+  }
+  favoritesSection.classList.remove('empty');
+  for (const p of visiblePages) {
+    const item = document.createElement('div');
+    item.className = 'fav-item' + (p.id === activeId ? ' active' : '');
+    item.innerHTML = `
+      <span class="fav-indicator"></span>
+      <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
+      <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+      <button class="fav-remove-btn" title="取消收藏">★</button>`;
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.fav-remove-btn')) return;
+      if (p.type === 'direct') {
+        window.open(p.url, '_blank');
+        return;
+      }
+      selectPage(p.id);
+    });
+    item.querySelector('.fav-remove-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFavorite(p.id);
+    });
+    favoritesList.appendChild(item);
+  }
+}
+
 // ---------- 渲染 ----------
 function renderSidebar() {
   pageList.innerHTML = '';
@@ -121,6 +201,9 @@ function renderSidebar() {
 
   // 权限控制：设置入口仅管理员可见
   $('settingsEntry').classList.toggle('hidden', !isAdmin);
+
+  // 刷新收藏区域
+  renderFavorites();
 
   if (pages.length === 0) return;
 
@@ -145,12 +228,15 @@ function renderSidebar() {
       const canEdit = canEditPage(p.id);
       const canDel = canDeletePage(p.id);
       const canCopy = canCreatePage();
-      item.className = 'page-item' + (p.id === activeId ? ' active' : '');
+      const isDirect = p.type === 'direct';
+      const isFav = isFavorited(p.id);
+      item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '');
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
-        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : ''}</span>
+        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : ''}</span>
         <span class="item-actions">
+          <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
@@ -161,7 +247,20 @@ function renderSidebar() {
           </div>
         </span>`;
 
-      item.addEventListener('click', () => selectPage(p.id));
+      // 点击事件：直链页面在新标签页打开
+      item.addEventListener('click', () => {
+        if (isDirect) {
+          window.open(p.url, '_blank');
+          return;
+        }
+        selectPage(p.id);
+      });
+      // 星标按钮
+      const favBtn = item.querySelector('.fav-star');
+      favBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleFavorite(p.id);
+      });
       // 三点菜单：展开/收起，同一时间只保留一个打开的菜单
       // 用 fixed 定位避开 .page-list 的 overflow 裁剪，位置按按钮实际坐标计算
       const menu = item.querySelector('.item-menu');
@@ -236,6 +335,8 @@ async function duplicatePage(page) {
     body.url = page.url;
     if (page.proxyMode) body.proxyMode = page.proxyMode;
     if (page.auth) body.auth = page.auth;
+  } else if (page.type === 'direct') {
+    body.url = page.url;
   } else if (page.type === 'custom') {
     body.sourceId = page.id;
   } else {
@@ -281,6 +382,16 @@ function showPage(page) {
     exitMdEdit();
     const entry = page.entry || 'index.html';
     customFrame.src = '/hilbert-custom/' + page.id + '/' + entry;
+  } else if (page.type === 'direct') {
+    // 直链页面：新标签页打开后回到欢迎页
+    iframeWrap.classList.add('hidden');
+    mdView.classList.add('hidden');
+    customView.classList.add('hidden');
+    openExternalBtn.classList.add('hidden');
+    editToggleBtn.classList.add('hidden');
+    exitMdEdit();
+    window.open(page.url, '_blank');
+    showWelcome();
   } else {
     mdView.classList.add('hidden');
     iframeWrap.classList.remove('hidden');
@@ -391,6 +502,8 @@ $('welcomeNewBtn').addEventListener('click', () => openModal());
 $('welcomeSettingsBtn').addEventListener('click', showSettings);
 
 // ---------- 分组管理（设置页） ----------
+let dragSrcIndex = null; // 拖拽源索引
+
 function renderGroupList() {
   groupList.innerHTML = '';
   if (groups.length === 0) {
@@ -400,19 +513,105 @@ function renderGroupList() {
     groupList.appendChild(li);
     return;
   }
-  for (const g of groups) {
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
     const count = pages.filter(p => p.group === g).length;
     const li = document.createElement('li');
     li.className = 'group-item';
+    li.draggable = true;
+    li.dataset.index = i;
     li.innerHTML = `
-      <span class="group-name">${escapeHtml(g)}</span>
+      <span class="group-drag-handle" title="拖拽排序">≡</span>
+      <span class="group-name" title="双击编辑名称">${escapeHtml(g)}</span>
       <span class="group-count">${count} 个页面</span>
       <button class="group-del" title="删除分组">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>`;
+
+    // 删除按钮
     li.querySelector('.group-del').addEventListener('click', () => deleteGroup(g, count));
+
+    // 双击编辑名称
+    const nameSpan = li.querySelector('.group-name');
+    nameSpan.addEventListener('dblclick', () => startGroupEdit(li, g, nameSpan));
+
+    // 拖拽事件
+    li.addEventListener('dragstart', e => {
+      dragSrcIndex = parseInt(li.dataset.index);
+      li.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(dragSrcIndex));
+    });
+    li.addEventListener('dragend', () => {
+      li.classList.remove('dragging');
+      document.querySelectorAll('.group-item').forEach(el => el.classList.remove('drag-over'));
+    });
+    li.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      li.classList.add('drag-over');
+    });
+    li.addEventListener('dragleave', () => {
+      li.classList.remove('drag-over');
+    });
+    li.addEventListener('drop', async e => {
+      e.preventDefault();
+      li.classList.remove('drag-over');
+      const targetIndex = parseInt(li.dataset.index);
+      if (dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+      // 重排分组数组
+      const newOrder = [...groups];
+      const [moved] = newOrder.splice(dragSrcIndex, 1);
+      newOrder.splice(targetIndex, 0, moved);
+      try {
+        groups = await groupsApi('/order', { method: 'PUT', body: JSON.stringify({ order: newOrder }) });
+        renderGroupList();
+        renderSidebar();
+        showToast('分组顺序已更新');
+      } catch (err) {
+        showToast(err.message);
+      }
+      dragSrcIndex = null;
+    });
+
     groupList.appendChild(li);
   }
+}
+
+// 分组名称 inline 编辑
+function startGroupEdit(li, oldName, nameSpan) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'group-edit-input';
+  input.value = oldName;
+  input.maxLength = 20;
+  nameSpan.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const finish = async (save) => {
+    const newName = input.value.trim();
+    if (save && newName && newName !== oldName) {
+      try {
+        groups = await groupsApi('/' + encodeURIComponent(oldName), { method: 'PUT', body: JSON.stringify({ name: newName }) });
+        pages = await api('');
+        renderGroupList();
+        renderSidebar();
+        showToast('分组已重命名');
+        return;
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+    // 取消或失败：恢复原名
+    renderGroupList();
+  };
+
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+  });
 }
 
 async function addGroup() {
@@ -847,12 +1046,22 @@ function setType(type) {
     btn.classList.toggle('active', btn.dataset.type === type);
   });
   const isLink = type === 'link';
-  $('urlField').classList.toggle('hidden', !isLink);
+  const isDirect = type === 'direct';
+  const needUrl = isLink || isDirect;
+  $('urlField').classList.toggle('hidden', !needUrl);
+  // 直链只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.toggle('hidden', !isLink);
   $('authField').classList.toggle('hidden', !isLink);
   $('customFileField').classList.toggle('hidden', type !== 'custom');
-  $('fieldUrl').required = isLink;
+  $('fieldUrl').required = needUrl;
+  // 更新 URL 标签文字
+  const urlLabel = $('urlField').querySelector('label');
+  if (urlLabel) {
+    urlLabel.innerHTML = isDirect
+      ? '目标链接 <span class="required">*</span>'
+      : '嵌入链接 <span class="required">*</span>';
+  }
   // markdown 页面的正文统一在右侧原地编辑，弹窗不提供内容输入
 }
 
@@ -953,7 +1162,7 @@ $('pageForm').addEventListener('submit', async e => {
   const body = {
     type: currentType,
     name: $('fieldName').value.trim(),
-    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️' }[currentType] || '🔗'),
+    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[currentType] || '🔗'),
     group: $('fieldGroup').value || '未分组'
   };
   if (currentType === 'link') {
@@ -984,6 +1193,8 @@ $('pageForm').addEventListener('submit', async e => {
     } else {
       body.auth = null;
     }
+  } else if (currentType === 'direct') {
+    body.url = $('fieldUrl').value.trim();
   }
   const saveBtn = $('saveBtn');
   saveBtn.disabled = true;
@@ -1210,6 +1421,8 @@ async function init() {
       userName.textContent = me.name || 'Admin';
       userEmail.textContent = me.email || '';
       isAdmin = !!me.isAdmin;
+      currentUserEmail = me.email || '';
+      await loadFavorites();
     }
     // 加载权限
     const permRes = await authenticatedFetch('/hilbert-api/my-permissions');

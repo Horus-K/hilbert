@@ -207,8 +207,12 @@ function renderSidebar() {
 
   if (pages.length === 0) return;
 
-  // 按分组聚合，保持出现顺序
+  // 按分组聚合，顺序跟随 groups 数组（设置页拖拽排序的结果）
   const groupMap = new Map();
+  // 先按 groups 顺序初始化（保证排序）
+  for (const g of groups) {
+    groupMap.set(g, []);
+  }
   for (const p of pages) {
     // 非管理员：过滤无 read 权限的页面
     if (!isAdmin && !canReadPage(p.id)) continue;
@@ -218,6 +222,7 @@ function renderSidebar() {
   }
 
   for (const [groupName, items] of groupMap) {
+    if (items.length === 0) continue; // 跳过空分组
     const title = document.createElement('div');
     title.className = 'group-title';
     title.textContent = groupName;

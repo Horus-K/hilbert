@@ -15,6 +15,7 @@ let rbacAssignments = [];     // RBAC 分配列表
 let editingRoleId = null;     // 当前编辑的角色 ID（null 为新建）
 let favorites = [];           // 当前用户收藏的页面 ID 列表
 let currentUserEmail = '';    // 当前用户邮箱（用于 localStorage 隔离）
+let collapsedGroups = [];     // 已折叠的分组名列表（默认全部折叠）
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -190,6 +191,38 @@ function renderFavorites() {
   }
 }
 
+// ---------- 分组折叠状态 ----------
+function loadCollapsedGroups() {
+  try {
+    const raw = localStorage.getItem('hilbert_collapsed_groups');
+    // 默认全部折叠：如果没有存储过状态，则所有分组都折叠
+    collapsedGroups = raw ? JSON.parse(raw) : null;
+  } catch { collapsedGroups = null; }
+}
+
+function saveCollapsedGroups() {
+  try {
+    localStorage.setItem('hilbert_collapsed_groups', JSON.stringify(collapsedGroups));
+  } catch { /* 存储失败忽略 */ }
+}
+
+function toggleGroupCollapse(groupName) {
+  if (collapsedGroups === null) {
+    // 首次操作：从全部折叠状态开始切换
+    // 获取所有分组名，除了当前分组外其他都保持折叠
+    collapsedGroups = [...groups].filter(g => g !== groupName);
+  } else {
+    const idx = collapsedGroups.indexOf(groupName);
+    if (idx >= 0) {
+      collapsedGroups.splice(idx, 1); // 展开
+    } else {
+      collapsedGroups.push(groupName); // 折叠
+    }
+  }
+  saveCollapsedGroups();
+  renderSidebar();
+}
+
 // ---------- 渲染 ----------
 function renderSidebar() {
   pageList.innerHTML = '';
@@ -221,12 +254,25 @@ function renderSidebar() {
     groupMap.get(g).push(p);
   }
 
+  // 加载折叠状态（默认全部折叠）
+  loadCollapsedGroups();
+
   for (const [groupName, items] of groupMap) {
     if (items.length === 0) continue; // 跳过空分组
+    // collapsedGroups 为 null 表示默认全部折叠
+    const isCollapsed = collapsedGroups === null || collapsedGroups.includes(groupName);
+    
+    // 分组标题（可点击折叠/展开）
     const title = document.createElement('div');
-    title.className = 'group-title';
-    title.textContent = groupName;
+    title.className = 'group-title' + (isCollapsed ? ' collapsed' : '');
+    title.innerHTML = `<span class="group-arrow">${isCollapsed ? '▶' : '▼'}</span><span class="group-name-text">${escapeHtml(groupName)}</span>`;
+    title.addEventListener('click', () => toggleGroupCollapse(groupName));
     pageList.appendChild(title);
+
+    // 分组内容容器
+    const groupContent = document.createElement('div');
+    groupContent.className = 'group-content' + (isCollapsed ? ' collapsed' : '');
+    pageList.appendChild(groupContent);
 
     for (const p of items) {
       const item = document.createElement('div');
@@ -304,7 +350,7 @@ function renderSidebar() {
         if (!confirmDiscardIfEditing()) return;
         openConfirm(p);
       });
-      pageList.appendChild(item);
+      groupContent.appendChild(item);
     }
   }
 }

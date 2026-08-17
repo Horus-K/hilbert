@@ -68,7 +68,7 @@ if (ADMIN_EMAILS.length === 0) {
 }
 
 // 支持的页面类型：link = iframe 嵌入外部链接，markdown = 渲染 Markdown 文档
-const PAGE_TYPES = ['link', 'markdown', 'custom'];
+const PAGE_TYPES = ['link', 'markdown', 'custom', 'direct'];
 
 // 默认页面配置（首次启动时写入）
 const DEFAULT_PAGES = [
@@ -823,24 +823,29 @@ app.post('/hilbert-api/pages', (req, res) => {
   if (type === 'link' && !isValidUrl(url)) {
     return res.status(400).json({ error: '请输入合法的 http/https 链接' });
   }
+  if (type === 'direct' && !isValidUrl(url)) {
+    return res.status(400).json({ error: '请输入合法的 http/https 链接' });
+  }
   const pages = readPages();
   const page = {
     id: crypto.randomUUID(),
     type,
     name: name.trim(),
-    icon: (icon || ({ markdown: '📝', custom: '🖥️' }[type] || '🔗')).trim(),
+    icon: (icon || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[type] || '🔗')).trim(),
     group: (group || '未分组').trim()
   };
-  if (type === 'link') {
+  if (type === 'link' || type === 'direct') {
     page.url = url.trim();
-    // 代理模式：mount（/hilbert-proxy/<id> 挂载）由编辑页面手动指定；默认恒等映射（不落盘该字段）
-    if (proxyMode === 'mount') page.proxyMode = 'mount';
-    if (resolveIp) page.resolveIp = resolveIp.trim();
-    const normalized = normalizeAuth(auth);
-    if (normalized === undefined) {
-      return res.status(400).json({ error: '认证信息不完整' });
+    if (type === 'link') {
+      // 代理模式：mount（/hilbert-proxy/<id> 挂载）由编辑页面手动指定；默认恒等映射（不落盘该字段）
+      if (proxyMode === 'mount') page.proxyMode = 'mount';
+      if (resolveIp) page.resolveIp = resolveIp.trim();
+      const normalized = normalizeAuth(auth);
+      if (normalized === undefined) {
+        return res.status(400).json({ error: '认证信息不完整' });
+      }
+      if (normalized) page.auth = normalized;
     }
-    if (normalized) page.auth = normalized;
   } else if (type === 'custom') {
     // 自定义页面：创建资源目录 + 默认 index.html
     ensureCustomPageDir(page.id);
@@ -906,7 +911,7 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
   }
   // 注意：content 不做直接赋值，markdown 页面的 content 字段保存的是文件路径，
   // 请求携带的文本统一在下方一致性校验中落盘
-  if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️' }[current.type] || '🔗');
+  if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[current.type] || '🔗');
   if (group !== undefined) current.group = (group || '未分组').trim();
 
   // 按最终类型做一致性校验，并清理不属于该类型的字段
@@ -914,6 +919,14 @@ app.put('/hilbert-api/pages/:id', (req, res) => {
     if (!isValidUrl(current.url)) return res.status(400).json({ error: '请输入合法的 http/https 链接' });
     deleteMdFile(current.content); // 类型切换为 link 时清理旧 md 文件
     delete current.content;
+  } else if (current.type === 'direct') {
+    if (!isValidUrl(current.url)) return res.status(400).json({ error: '请输入合法的 http/https 链接' });
+    deleteMdFile(current.content);
+    delete current.content;
+    // 直链不需要认证、代理、DNS 配置
+    delete current.auth;
+    delete current.proxyMode;
+    delete current.resolveIp;
   } else {
     if (current.type === 'custom') {
       delete current.auth;
@@ -1060,6 +1073,54 @@ app.post('/hilbert-api/groups', requireAdmin, (req, res) => {
   res.status(201).json(groups);
 });
 
+// 分组排序（仅超级管理员）—— 必须在 /:name 之前定义，避免 "order" 被当作 :name 参数匹配
+app.put('/hilbert-api/groups/order', requireAdmin, (req, res) => {
+  const order = (req.body || {}).order;
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ error: '参数格式错误' });
+  }
+  const groups = readGroups();
+  // 校验：新顺序必须包含所有现有分组（不丢不多）
+  if (order.length !== groups.length || !order.every(g => groups.includes(g))) {
+    return res.status(400).json({ error: '分组列表不匹配' });
+  }
+  writeGroups(order);
+  res.json(order);
+});
+
+// 重命名分组（仅超级管理员）
+app.put('/hilbert-api/groups/:name', requireAdmin, (req, res) => {
+  const oldName = decodeURIComponent(req.params.name);
+  const newName = ((req.body || {}).name || '').trim();
+  if (!newName) {
+    return res.status(400).json({ error: '分组名称不能为空' });
+  }
+  if (newName === '未分组') {
+    return res.status(400).json({ error: '不能使用保留分组名「未分组」' });
+  }
+  const groups = readGroups();
+  const idx = groups.indexOf(oldName);
+  if (idx === -1) {
+    return res.status(404).json({ error: '分组不存在' });
+  }
+  if (groups.includes(newName) && newName !== oldName) {
+    return res.status(400).json({ error: '分组名称已存在' });
+  }
+  groups[idx] = newName;
+  writeGroups(groups);
+  // 同步更新页面的 group 字段
+  const pages = readPages();
+  let changed = false;
+  for (const p of pages) {
+    if (p.group === oldName) {
+      p.group = newName;
+      changed = true;
+    }
+  }
+  if (changed) writePages(pages);
+  res.json(groups);
+});
+
 // 删除分组（该分组下的页面移至未分组，仅超级管理员）
 app.delete('/hilbert-api/groups/:name', requireAdmin, (req, res) => {
   const name = decodeURIComponent(req.params.name);
@@ -1080,6 +1141,54 @@ app.delete('/hilbert-api/groups/:name', requireAdmin, (req, res) => {
   }
   if (changed) writePages(pages);
   res.json(groups);
+});
+
+// ---------- API：用户收藏 ----------
+
+const FAVORITES_DIR = path.join(DATA_DIR, 'favorites');
+
+function favoritesFile(email) {
+  return path.join(FAVORITES_DIR, email.replace(/[^a-zA-Z0-9@._-]/g, '_') + '.json');
+}
+
+function readFavorites(email) {
+  const file = favoritesFile(email);
+  if (!fs.existsSync(file)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+function writeFavorites(email, list) {
+  if (!fs.existsSync(FAVORITES_DIR)) fs.mkdirSync(FAVORITES_DIR, { recursive: true });
+  fs.writeFileSync(favoritesFile(email), JSON.stringify(list, null, 2), 'utf8');
+}
+
+// 获取当前用户收藏列表
+app.get('/hilbert-api/favorites', (req, res) => {
+  res.json(readFavorites(req.user.email));
+});
+
+// 切换收藏状态（添加或移除）
+app.post('/hilbert-api/favorites/toggle', (req, res) => {
+  const { pageId } = req.body || {};
+  if (!pageId) return res.status(400).json({ error: '缺少页面 ID' });
+  const email = req.user.email;
+  const list = readFavorites(email);
+  const idx = list.indexOf(pageId);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(pageId);
+  writeFavorites(email, list);
+  res.json(list);
+});
+
+// 设置收藏列表（覆盖）
+app.put('/hilbert-api/favorites', (req, res) => {
+  const { pageIds } = req.body || {};
+  if (!Array.isArray(pageIds)) return res.status(400).json({ error: '参数格式错误' });
+  writeFavorites(req.user.email, pageIds);
+  res.json(pageIds);
 });
 
 // ---------- 反向代理：自动注入认证 ----------

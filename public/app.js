@@ -1188,8 +1188,8 @@ $('pageForm').addEventListener('submit', async e => {
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();
     body.proxyMode = $('fieldProxyMode').value;
-    const resolveIp = $('fieldResolveIp').value.trim();
-    if (resolveIp) body.resolveIp = resolveIp;
+    // 始终传递 resolveIp（空字符串时后端会删除该字段）
+    body.resolveIp = $('fieldResolveIp').value.trim();
     // 认证配置：勾选时按所选模式提交，未勾选时显式清除
     if ($('authEnabled').checked) {
       const mode = $('authMode').value;

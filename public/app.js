@@ -26,6 +26,12 @@ const iframeWrap = $('iframeWrap');
 const mdView = $('mdView');
 const mdBody = $('mdBody');
 const mdEditor = $('mdEditor');
+const mdToolbar = $('mdToolbar');
+const mdToolbarIcon = $('mdToolbarIcon');
+const mdToolbarTitle = $('mdToolbarTitle');
+const mdEditBtn = $('mdEditBtn');
+const mdSaveBtn = $('mdSaveBtn');
+const mdCancelBtn = $('mdCancelBtn');
 const welcomeView = $('welcomeView');
 const settingsView = $('settingsView');
 const groupList = $('groupList');
@@ -418,6 +424,11 @@ function showPage(page) {
     customView.classList.add('hidden');
     loadingMask.classList.add('fade-out');
     exitMdEdit();
+    // 更新工具栏标题和图标
+    mdToolbarIcon.textContent = page.icon || '📝';
+    mdToolbarTitle.textContent = page.name;
+    // 根据权限控制编辑按钮
+    mdEditBtn.classList.toggle('hidden', !canEditPage(page.id));
     renderMarkdown(page);
   } else if (page.type === 'custom') {
     iframeWrap.classList.add('hidden');
@@ -1005,6 +1016,10 @@ function enterMdEdit() {
   mdView.classList.add('editing');
   mdView.scrollTop = 0;
   mdEditor.focus();
+  // 切换工具栏按钮
+  mdEditBtn.classList.add('hidden');
+  mdSaveBtn.classList.remove('hidden');
+  mdCancelBtn.classList.remove('hidden');
 }
 
 function exitMdEdit() {
@@ -1012,6 +1027,14 @@ function exitMdEdit() {
   mdEditor.classList.add('hidden');
   mdBody.classList.remove('hidden');
   mdView.classList.remove('editing');
+  // 切换工具栏按钮
+  mdSaveBtn.classList.add('hidden');
+  mdCancelBtn.classList.add('hidden');
+  // 编辑按钮的显隐由权限决定，在 showPage 中已处理
+  const page = pages.find(p => p.id === activeId);
+  if (page && page.type === 'markdown') {
+    mdEditBtn.classList.toggle('hidden', !canEditPage(page.id));
+  }
 }
 
 function isMdDirty() {
@@ -1053,6 +1076,14 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     saveMdEdit();
   }
+});
+
+// 工具栏按钮事件
+mdEditBtn.addEventListener('click', () => enterMdEdit());
+mdSaveBtn.addEventListener('click', () => saveMdEdit());
+mdCancelBtn.addEventListener('click', () => {
+  if (isMdDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
+  exitMdEdit();
 });
 
 mainFrame.addEventListener('load', () => {

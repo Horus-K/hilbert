@@ -34,13 +34,6 @@ const newGroupName = $('newGroupName');
 const favoritesSection = $('favoritesSection');
 const favoritesList = $('favoritesList');
 const favoritesCount = $('favoritesCount');
-const reloadBtn = $('reloadBtn');
-const editToggleBtn = $('editToggleBtn');
-const editCancelBtn = $('editCancelBtn');
-const editSaveBtn = $('editSaveBtn');
-const topbarIcon = $('topbarIcon');
-const topbarName = $('topbarName');
-const openExternalBtn = $('openExternalBtn');
 const customView = $('customView');
 const customFrame = $('customFrame');
 const modalFileList = $('modalFileList');
@@ -288,6 +281,7 @@ function renderSidebar() {
         <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : ''}</span>
         <span class="item-actions">
           <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
+          ${p.type !== 'direct' ? `<button class="open-external" title="在新标签页打开"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ''}
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
@@ -312,6 +306,14 @@ function renderSidebar() {
         e.stopPropagation();
         toggleFavorite(p.id);
       });
+      // 新标签页打开按钮
+      const openBtn = item.querySelector('.open-external');
+      if (openBtn) {
+        openBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          window.open(p.url, '_blank');
+        });
+      }
       // 三点菜单：展开/收起，同一时间只保留一个打开的菜单
       // 用 fixed 定位避开 .page-list 的 overflow 裁剪，位置按按钮实际坐标计算
       const menu = item.querySelector('.item-menu');
@@ -409,19 +411,13 @@ function showPage(page) {
   $('sidebar').classList.add('collapsed');
   welcomeView.classList.add('hidden');
   settingsView.classList.add('hidden');
-  reloadBtn.classList.remove('hidden');
-  topbarIcon.textContent = page.icon || (page.type === 'markdown' ? '📝' : '🔗');
-  topbarName.textContent = page.name;
 
   if (page.type === 'markdown') {
     iframeWrap.classList.add('hidden');
     mdView.classList.remove('hidden');
     customView.classList.add('hidden');
     loadingMask.classList.add('fade-out');
-    openExternalBtn.classList.add('hidden');
     exitMdEdit();
-    // 权限控制：编辑按钮仅对有 update 权限的用户显示
-    editToggleBtn.classList.toggle('hidden', !canEditPage(page.id) && !isAdmin);
     renderMarkdown(page);
   } else if (page.type === 'custom') {
     iframeWrap.classList.add('hidden');
@@ -430,8 +426,6 @@ function showPage(page) {
     welcomeView.classList.add('hidden');
     settingsView.classList.add('hidden');
     loadingMask.classList.add('fade-out');
-    openExternalBtn.classList.add('hidden');
-    editToggleBtn.classList.add('hidden');
     exitMdEdit();
     const entry = page.entry || 'index.html';
     customFrame.src = '/hilbert-custom/' + page.id + '/' + entry;
@@ -440,18 +434,13 @@ function showPage(page) {
     iframeWrap.classList.add('hidden');
     mdView.classList.add('hidden');
     customView.classList.add('hidden');
-    openExternalBtn.classList.add('hidden');
-    editToggleBtn.classList.add('hidden');
     exitMdEdit();
     window.open(page.url, '_blank');
     showWelcome();
   } else {
     mdView.classList.add('hidden');
     iframeWrap.classList.remove('hidden');
-    openExternalBtn.classList.remove('hidden');
-    editToggleBtn.classList.add('hidden');
     exitMdEdit();
-    openExternalBtn.href = page.url;
     loadingMask.classList.remove('fade-out');
     // link 页面一律走反向代理：剥离目标站的 iframe 嵌入限制、改写 Origin/Referer
     // 通过 CSRF 校验；直连目标 URL 会因跨域被目标站拒绝（如 Grafana 的 origin not allowed）
@@ -482,11 +471,6 @@ function showWelcome() {
   settingsView.classList.add('hidden');
   welcomeView.classList.remove('hidden');
   loadingMask.classList.add('fade-out');
-  topbarIcon.textContent = '👋';
-  topbarName.textContent = '欢迎';
-  reloadBtn.classList.add('hidden');
-  openExternalBtn.classList.add('hidden');
-  editToggleBtn.classList.add('hidden');
   // 权限控制：欢迎页按钮
   $('welcomeNewBtn').classList.toggle('hidden', !canCreatePage() && !isAdmin);
   $('welcomeSettingsBtn').classList.toggle('hidden', !isAdmin);
@@ -511,11 +495,6 @@ function showSettings() {
   customView.classList.add('hidden');
   welcomeView.classList.add('hidden');
   settingsView.classList.remove('hidden');
-  topbarIcon.textContent = '⚙️';
-  topbarName.textContent = '设置';
-  reloadBtn.classList.add('hidden');
-  openExternalBtn.classList.add('hidden');
-  editToggleBtn.classList.add('hidden');
   groupError.classList.add('hidden');
   renderGroupList();
   // RBAC 面板：仅管理员可见
@@ -1023,9 +1002,6 @@ function enterMdEdit() {
   mdEditor.value = page.content || '';
   mdBody.classList.add('hidden');
   mdEditor.classList.remove('hidden');
-  editToggleBtn.classList.add('hidden');
-  editCancelBtn.classList.remove('hidden');
-  editSaveBtn.classList.remove('hidden');
   mdView.classList.add('editing');
   mdView.scrollTop = 0;
   mdEditor.focus();
@@ -1035,8 +1011,6 @@ function exitMdEdit() {
   mdEditing = false;
   mdEditor.classList.add('hidden');
   mdBody.classList.remove('hidden');
-  editCancelBtn.classList.add('hidden');
-  editSaveBtn.classList.add('hidden');
   mdView.classList.remove('editing');
 }
 
@@ -1059,7 +1033,6 @@ async function saveMdEdit() {
     showToast('Markdown 内容不能为空');
     return;
   }
-  editSaveBtn.disabled = true;
   try {
     const updated = await api('/' + page.id, {
       method: 'PUT',
@@ -1067,23 +1040,12 @@ async function saveMdEdit() {
     });
     Object.assign(page, updated);
     exitMdEdit();
-    editToggleBtn.classList.remove('hidden');
     renderMarkdown(page);
     showToast('文档已保存');
   } catch (err) {
     showToast(err.message);
-  } finally {
-    editSaveBtn.disabled = false;
   }
 }
-
-editToggleBtn.addEventListener('click', enterMdEdit);
-editCancelBtn.addEventListener('click', () => {
-  if (!confirmDiscardIfEditing()) return;
-  exitMdEdit();
-  editToggleBtn.classList.remove('hidden');
-});
-editSaveBtn.addEventListener('click', saveMdEdit);
 
 // 编辑模式下 Ctrl+S 保存
 document.addEventListener('keydown', e => {
@@ -1413,14 +1375,6 @@ modalFileUploadZone.addEventListener('drop', e => {
   }
 });
 
-// ---------- 顶栏操作 ----------
-$('reloadBtn').addEventListener('click', () => {
-  if (currentView !== 'page') return;
-  if (!confirmDiscardIfEditing()) return;
-  const page = pages.find(p => p.id === activeId);
-  if (page) showPage(page);
-});
-
 // ---------- 侧边栏 hover 自动展开/收起 ----------
 let sidebarCollapseTimer = null;
 
@@ -1512,7 +1466,7 @@ async function init() {
   try {
     [pages, groups] = await Promise.all([api(''), groupsApi()]);
   } catch (err) {
-    topbarName.textContent = '加载失败：' + err.message;
+    showToast('加载失败：' + err.message);
     return;
   }
   renderSidebar();

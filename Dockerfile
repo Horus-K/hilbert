@@ -19,6 +19,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json server.js config.js ./
 COPY public ./public
+COPY src ./src
 
 # 数据目录：页面/分组配置、Markdown 文档与自定义页面资源，运行时通过卷挂载持久化
 RUN mkdir -p /app/data /app/data/custom-pages && chown -R node:node /app

@@ -12,16 +12,32 @@ function isValidUrl(str) {
 
 /**
  * 校验并规范化认证配置
- * 支持三种模式：basic / login / header
+ * 支持四种模式：basic / login / oauth / header
  * 返回值：null = 未启用，undefined = 非法配置，对象 = 规范化后的配置
  */
 function normalizeAuth(auth) {
   if (!auth) return null;
   const mode = auth.mode || 'basic'; // 兼容旧数据：无 mode 视为 basic
-  if (!['basic', 'login', 'header'].includes(mode)) return undefined;
+  if (!['basic', 'login', 'oauth', 'header'].includes(mode)) return undefined;
   if (mode === 'header') {
     if (!auth.headerName || !String(auth.headerValue).trim()) return undefined;
     return { mode, headerName: String(auth.headerName).trim(), headerValue: String(auth.headerValue) };
+  }
+  if (mode === 'oauth') {
+    if (!auth.tokenUrl || !auth.clientId || !auth.clientSecret) return undefined;
+    let tokenUrl = String(auth.tokenUrl).trim();
+    try {
+      const u = new URL(tokenUrl);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    } catch { return undefined; }
+    const normalized = {
+      mode,
+      tokenUrl,
+      clientId: String(auth.clientId).trim(),
+      clientSecret: String(auth.clientSecret)
+    };
+    if (auth.scope) normalized.scope = String(auth.scope).trim();
+    return normalized;
   }
   if (!auth.username || !auth.password) return undefined;
   const normalized = { mode, username: String(auth.username), password: String(auth.password) };

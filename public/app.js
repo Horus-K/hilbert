@@ -1206,13 +1206,14 @@ $('authEnabled').addEventListener('change', () => {
   $('authBox').classList.toggle('hidden', !$('authEnabled').checked);
 });
 
-// 认证模式切换：basic/login 显示账号密码，header 显示自定义头，login 额外显示登录路径与请求格式
+// 认证模式切换：basic/login 显示账号密码，header 显示自定义头，oauth 显示客户端凭证，login 额外显示登录路径与请求格式
 function setAuthMode(mode) {
   $('authMode').value = mode;
-  $('authUserPass').classList.toggle('hidden', mode === 'header');
+  $('authUserPass').classList.toggle('hidden', mode === 'header' || mode === 'oauth');
   $('authLoginPath').classList.toggle('hidden', mode !== 'login');
   $('authLoginOpts').classList.toggle('hidden', mode !== 'login');
   $('authHeaderInputs').classList.toggle('hidden', mode !== 'header');
+  $('authOAuthFields').classList.toggle('hidden', mode !== 'oauth');
 }
 $('authMode').addEventListener('change', () => setAuthMode($('authMode').value));
 
@@ -1266,6 +1267,10 @@ function openModal(page = null) {
   $('authPasswordField').value = hasAuth && page.auth.passwordField !== 'password' ? (page.auth.passwordField || '') : '';
   $('authHeaderName').value = hasAuth ? (page.auth.headerName || '') : '';
   $('authHeaderValue').value = hasAuth ? (page.auth.headerValue || '') : '';
+  $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
+  $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
+  $('authClientSecret').value = hasAuth ? (page.auth.clientSecret || '') : '';
+  $('authScope').value = hasAuth ? (page.auth.scope || '') : '';
   fillGroupSelect(page ? page.group : (groups[0] || '未分组'));
   setType(page ? page.type || 'link' : 'link');
   // 重置弹窗文件管理状态
@@ -1311,6 +1316,15 @@ $('pageForm').addEventListener('submit', async e => {
           headerName: $('authHeaderName').value.trim(),
           headerValue: $('authHeaderValue').value.trim()
         };
+      } else if (mode === 'oauth') {
+        body.auth = {
+          mode,
+          tokenUrl: $('authTokenUrl').value.trim(),
+          clientId: $('authClientId').value.trim(),
+          clientSecret: $('authClientSecret').value
+        };
+        const scope = $('authScope').value.trim();
+        if (scope) body.auth.scope = scope;
       } else {
         body.auth = { mode, username: $('authUser').value.trim(), password: $('authPass').value };
         if (mode === 'login') {

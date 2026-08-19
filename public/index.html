@@ -216,6 +216,7 @@
             <select id="authMode">
               <option value="basic">Basic Auth（Authorization 头）</option>
               <option value="login">表单登录（用户名密码登录，如 Grafana）</option>
+              <option value="oauth">OAuth 2.0 客户端凭证（如 Polaris）</option>
               <option value="header">自定义请求头（如 Bearer 令牌）</option>
             </select>
             <div class="auth-inputs" id="authUserPass">
@@ -236,6 +237,14 @@
             <div class="auth-inputs hidden" id="authHeaderInputs">
               <input type="text" id="authHeaderName" placeholder="请求头名称，如 Authorization" />
               <input type="text" id="authHeaderValue" placeholder="请求头值，如 Bearer xxx" />
+            </div>
+            <div class="hidden" id="authOAuthFields">
+              <input type="text" id="authTokenUrl" placeholder="令牌端点 URL（如 https://example.com/oauth/tokens）" autocomplete="off" />
+              <div class="auth-inputs">
+                <input type="text" id="authClientId" placeholder="Client ID" autocomplete="off" />
+                <input type="password" id="authClientSecret" placeholder="Client Secret" autocomplete="new-password" />
+              </div>
+              <input type="text" id="authScope" placeholder="Scope（可选，如 PRINCIPAL_ROLE:ALL）" autocomplete="off" />
             </div>
           </div>
           <p class="form-hint">启用后页面将通过本地反向代理加载并自动携带认证，同时绕过目标站的 iframe 嵌入限制</p>

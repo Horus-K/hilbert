@@ -95,8 +95,8 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
         const dnsOpts = applyDnsOverride(page, targetUrl, base, headers);
         const reqOpts = { method: req.method, headers, agent, ...dnsOpts };
         const proxyReq = lib.request(targetUrl, reqOpts, proxyRes => {
-          // login 模式会话过期检测
-          const expired = auth && auth.mode === 'login' && !isRetry && (
+          // login/oauth 模式会话过期检测
+          const expired = auth && (auth.mode === 'login' || auth.mode === 'oauth') && !isRetry && (
             proxyRes.statusCode === 401 ||
             ([301, 302, 303, 307, 308].includes(proxyRes.statusCode) &&
               /login/i.test(proxyRes.headers.location || ''))

@@ -1703,6 +1703,89 @@ body {
   background: rgba(245, 158, 11, 0.15);
 }
 
+/* ================= 置顶区域 ================= */
+
+.pinned-section {
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.pinned-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.pinned-count {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--hover-bg);
+  padding: 0 5px;
+  border-radius: 8px;
+  line-height: 16px;
+}
+
+.pinned-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background 0.15s;
+  position: relative;
+}
+
+.pinned-item:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.pinned-item.active {
+  background: var(--active-bg);
+  color: var(--text-primary);
+}
+
+.pinned-item .item-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.pinned-item .item-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 直链置顶项样式 */
+.pinned-item.is-direct {
+  cursor: default;
+}
+
+.pinned-item.is-direct .item-name {
+  font-style: italic;
+}
+
+/* ================= 置顶按钮（菜单内） ================= */
+
+.menu-pin {
+  color: #3b82f6 !important;
+}
+
+.menu-pin:hover {
+  background: rgba(59, 130, 246, 0.1) !important;
+}
+
 /* ================= 星标按钮 ================= */
 
 .fav-star {

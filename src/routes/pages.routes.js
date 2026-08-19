@@ -39,6 +39,15 @@ router.delete('/:id', (req, res) => {
   res.json(removed);
 });
 
+// 切换页面置顶（仅管理员）
+router.put('/:id/pin', (req, res) => {
+  if (!isAdmin(req.user.email)) {
+    throw new AppError('仅管理员可置顶页面', 403);
+  }
+  const page = pagesService.togglePin(req.params.id);
+  res.json(page);
+});
+
 // 上传文件（支持多文件 + zip 包）
 router.post('/:id/upload', (req, res) => {
   if (!hasPermission(req.user.email, req.params.id, 'update')) {

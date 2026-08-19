@@ -40,6 +40,9 @@ const newGroupName = $('newGroupName');
 const favoritesSection = $('favoritesSection');
 const favoritesList = $('favoritesList');
 const favoritesCount = $('favoritesCount');
+const pinnedSection = $('pinnedSection');
+const pinnedList = $('pinnedList');
+const pinnedCount = $('pinnedCount');
 const customView = $('customView');
 const customFrame = $('customFrame');
 const modalFileList = $('modalFileList');
@@ -150,6 +153,56 @@ function isFavorited(pageId) {
   return favorites.includes(pageId);
 }
 
+// ---------- 置顶功能 ----------
+async function togglePagePin(pageId) {
+  try {
+    const updated = await authenticatedFetch('/hilbert-api/pages/' + pageId + '/pin', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await updated.json();
+    if (!updated.ok) throw new Error(data.error || '操作失败');
+    // 更新本地数据
+    const page = pages.find(p => p.id === pageId);
+    if (page) page.pinned = data.pinned;
+    renderSidebar();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function renderPinned() {
+  // 获取所有置顶页面（按权限过滤）
+  const pinnedPages = pages.filter(p => p.pinned && (isAdmin || canReadPage(p.id)));
+  pinnedCount.textContent = pinnedPages.length || '';
+
+  if (pinnedPages.length === 0) {
+    pinnedSection.classList.add('hidden');
+    return;
+  }
+  pinnedSection.classList.remove('hidden');
+  pinnedList.innerHTML = '';
+
+  for (const p of pinnedPages) {
+    const item = document.createElement('div');
+    const isDirect = p.type === 'direct';
+    item.className = 'pinned-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '');
+    item.innerHTML = `
+      <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
+      <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+      <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : ''}</span>`;
+
+    item.addEventListener('click', () => {
+      if (isDirect) {
+        window.open(p.url, '_blank');
+        return;
+      }
+      selectPage(p.id);
+    });
+    pinnedList.appendChild(item);
+  }
+}
+
 function renderFavorites() {
   favoritesList.innerHTML = '';
   // 过滤掉已不存在的页面
@@ -237,6 +290,9 @@ function renderSidebar() {
   // 刷新收藏区域
   renderFavorites();
 
+  // 刷新置顶区域
+  renderPinned();
+
   if (pages.length === 0) return;
 
   // 按分组聚合，顺序跟随 groups 数组（设置页拖拽排序的结果）
@@ -280,7 +336,8 @@ function renderSidebar() {
       const canCopy = canCreatePage();
       const isDirect = p.type === 'direct';
       const isFav = isFavorited(p.id);
-      item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '');
+      const isPinned = !!p.pinned;
+      item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '') + (isPinned ? ' is-pinned' : '');
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
@@ -292,6 +349,7 @@ function renderSidebar() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
           <div class="item-menu">
+            ${isAdmin ? `<button class="menu-pin">${isPinned ? '📌 取消置顶' : '📍 置顶'}</button>` : ''}
             ${canCopy ? '<button class="menu-copy">复制</button>' : ''}
             ${canEdit ? '<button class="menu-edit">编辑</button>' : ''}
             ${canDel ? '<button class="menu-del danger">删除</button>' : ''}
@@ -341,6 +399,11 @@ function renderSidebar() {
         }
       });
       menu.addEventListener('click', e => e.stopPropagation());
+      const pinMenuBtn = menu.querySelector('.menu-pin');
+      if (pinMenuBtn) pinMenuBtn.addEventListener('click', () => {
+        closeAllItemMenus();
+        togglePagePin(p.id);
+      });
       const copyBtn = menu.querySelector('.menu-copy');
       if (copyBtn) copyBtn.addEventListener('click', () => {
         closeAllItemMenus();
@@ -464,11 +527,27 @@ function showPage(page) {
       + (pageUrl.search || '');
   }
   updateSidebarTrigger();
+  saveViewState();
 }
 
 function renderMarkdown(page) {
   mdBody.innerHTML = marked.parse(page.content || '');
   mdView.scrollTop = 0;
+}
+
+// ---------- 视图状态持久化 ----------
+function saveViewState() {
+  try {
+    sessionStorage.setItem('hilbert_view', JSON.stringify({ view: currentView, activeId }));
+  } catch { /* 忽略 */ }
+}
+
+function restoreViewState() {
+  try {
+    const raw = sessionStorage.getItem('hilbert_view');
+    if (raw) return JSON.parse(raw);
+  } catch { /* 忽略 */ }
+  return null;
 }
 
 // ---------- 欢迎页 / 设置页 ----------
@@ -487,6 +566,7 @@ function showWelcome() {
   $('welcomeSettingsBtn').classList.toggle('hidden', !isAdmin);
   renderSidebar();
   updateSidebarTrigger();
+  saveViewState();
 }
 
 function showSettings() {
@@ -517,6 +597,7 @@ function showSettings() {
   }
   renderSidebar();
   updateSidebarTrigger();
+  saveViewState();
 }
 
 $('settingsEntry').addEventListener('click', showSettings);
@@ -1501,7 +1582,22 @@ async function init() {
     return;
   }
   renderSidebar();
-  showWelcome(); // 起始页统一为欢迎页
+  const saved = restoreViewState();
+  if (saved && saved.view === 'settings' && isAdmin) {
+    showSettings();
+  } else if (saved && saved.view === 'page' && saved.activeId) {
+    const target = pages.find(p => p.id === saved.activeId);
+    if (target && target.type !== 'direct') {
+      activeId = saved.activeId;
+      currentView = 'page';
+      showPage(target);
+      renderSidebar();
+    } else {
+      showWelcome();
+    }
+  } else {
+    showWelcome(); // 无保存状态时默认欢迎页
+  }
 
   // 加载版本号
   try {

@@ -162,4 +162,17 @@ function deletePage(id) {
   return removed;
 }
 
-module.exports = { getAllPages, createPage, updatePage, deletePage };
+/**
+ * 切换页面置顶状态（仅管理员）
+ */
+function togglePin(id) {
+  const pages = pagesRepo.read();
+  const idx = pages.findIndex(p => p.id === id);
+  if (idx === -1) throw new AppError('页面不存在', 404);
+
+  pages[idx].pinned = !pages[idx].pinned;
+  pagesRepo.write(pages);
+  return markdownSvc.resolvePage(pages[idx]);
+}
+
+module.exports = { getAllPages, createPage, updatePage, deletePage, togglePin };

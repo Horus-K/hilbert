@@ -18,7 +18,7 @@ const CUSTOM_PAGES_DIR = path.join(DATA_DIR, 'custom-pages');
 const FAVORITES_DIR = path.join(DATA_DIR, 'favorites');
 
 // 业务常量
-const PAGE_TYPES = ['link', 'markdown', 'custom', 'direct'];
+const PAGE_TYPES = ['link', 'markdown', 'custom', 'direct', 'iframe'];
 const ALL_ACTIONS = ['read', 'create', 'update', 'delete'];
 
 // 默认页面配置（首次启动时写入）

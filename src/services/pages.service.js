@@ -24,7 +24,7 @@ function createPage(data) {
 
   if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
   if (!name || !name.trim()) throw new AppError('页面名称不能为空');
-  if ((type === 'link' || type === 'direct') && !isValidUrl(url)) {
+  if ((type === 'link' || type === 'direct' || type === 'iframe') && !isValidUrl(url)) {
     throw new AppError('请输入合法的 http/https 链接');
   }
 
@@ -33,11 +33,11 @@ function createPage(data) {
     id: crypto.randomUUID(),
     type,
     name: name.trim(),
-    icon: (icon || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[type] || '🔗')).trim(),
+    icon: (icon || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[type] || '🔗')).trim(),
     group: (group || '未分组').trim()
   };
 
-  if (type === 'link' || type === 'direct') {
+  if (type === 'link' || type === 'direct' || type === 'iframe') {
     page.url = url.trim();
     if (type === 'link') {
       if (proxyMode === 'mount') page.proxyMode = 'mount';
@@ -96,7 +96,7 @@ function updatePage(id, data) {
     if (normalized) current.auth = normalized;
     else delete current.auth;
   }
-  if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[current.type] || '🔗');
+  if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[current.type] || '🔗');
   if (group !== undefined) current.group = (group || '未分组').trim();
 
   // 按最终类型做一致性校验，并清理不属于该类型的字段
@@ -104,7 +104,7 @@ function updatePage(id, data) {
     if (!isValidUrl(current.url)) throw new AppError('请输入合法的 http/https 链接');
     markdownSvc.deleteMdFile(current.content);
     delete current.content;
-  } else if (current.type === 'direct') {
+  } else if (current.type === 'direct' || current.type === 'iframe') {
     if (!isValidUrl(current.url)) throw new AppError('请输入合法的 http/https 链接');
     markdownSvc.deleteMdFile(current.content);
     delete current.content;

@@ -476,8 +476,8 @@ async function duplicatePage(page) {
 // 根据页面类型切换右侧展示：link → iframe，markdown → 渲染文档
 function showPage(page) {
   currentView = 'page';
-  // 点击页面后立即收起侧边栏
-  $('sidebar').classList.add('collapsed');
+  // 点击页面后收起侧边栏（常驻模式下不收起）
+  if (!sidebarPinned) $('sidebar').classList.add('collapsed');
   welcomeView.classList.add('hidden');
   settingsView.classList.add('hidden');
 
@@ -584,8 +584,8 @@ function showSettings() {
   }
   if (!confirmDiscardIfEditing()) return;
   currentView = 'settings';
-  // 进入设置页后收起侧边栏
-  $('sidebar').classList.add('collapsed');
+  // 进入设置页后收起侧边栏（常驻模式下不收起）
+  if (!sidebarPinned) $('sidebar').classList.add('collapsed');
   activeId = null;
   exitMdEdit();
   iframeWrap.classList.add('hidden');
@@ -1511,8 +1511,36 @@ modalFileUploadZone.addEventListener('drop', e => {
   }
 });
 
-// ---------- 侧边栏 hover 自动展开/收起 ----------
+// ---------- 侧边栏 hover 自动展开/收起 + 常驻模式 ----------
 let sidebarCollapseTimer = null;
+let sidebarPinned = false;
+
+// 从 localStorage 恢复常驻状态
+try {
+  sidebarPinned = localStorage.getItem('hilbert_sidebar_pinned') === '1';
+} catch { /* 忽略 */ }
+
+function applySidebarPinState() {
+  document.body.classList.toggle('sidebar-pinned', sidebarPinned);
+  const btn = $('sidebarPinBtn');
+  btn.classList.toggle('pinned', sidebarPinned);
+  btn.title = sidebarPinned ? '取消常驻' : '侧边栏常驻';
+  if (sidebarPinned) {
+    // 常驻模式：展开侧边栏
+    $('sidebar').classList.remove('collapsed');
+  }
+}
+
+// 初始应用
+applySidebarPinState();
+
+$('sidebarPinBtn').addEventListener('click', () => {
+  sidebarPinned = !sidebarPinned;
+  try {
+    localStorage.setItem('hilbert_sidebar_pinned', sidebarPinned ? '1' : '0');
+  } catch { /* 忽略 */ }
+  applySidebarPinState();
+});
 
 function updateSidebarTrigger() {
   const trigger = $('sidebarTrigger');
@@ -1528,7 +1556,7 @@ $('sidebarTrigger').addEventListener('mouseenter', () => {
 $('sidebarTrigger').addEventListener('mouseleave', () => {
   // 延迟收起，等待侧边栏滑出动画完成后再判断
   sidebarCollapseTimer = setTimeout(() => {
-    $('sidebar').classList.add('collapsed');
+    if (!sidebarPinned) $('sidebar').classList.add('collapsed');
   }, 300);
 });
 
@@ -1537,7 +1565,7 @@ $('sidebar').addEventListener('mouseenter', () => {
 });
 
 $('sidebar').addEventListener('mouseleave', () => {
-  $('sidebar').classList.add('collapsed');
+  if (!sidebarPinned) $('sidebar').classList.add('collapsed');
 });
 
 // ---------- 工具 ----------

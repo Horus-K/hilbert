@@ -190,7 +190,7 @@ function renderPinned() {
     item.innerHTML = `
       <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
       <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
-      <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : ''}</span>`;
+      <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>`;
 
     item.addEventListener('click', () => {
       if (isDirect) {
@@ -341,7 +341,7 @@ function renderSidebar() {
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
-        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : ''}</span>
+        <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>
         <span class="item-actions">
           <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
           ${p.type !== 'direct' ? `<button class="open-external" title="在新标签页打开"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ''}
@@ -457,7 +457,7 @@ async function duplicatePage(page) {
     body.url = page.url;
     if (page.proxyMode) body.proxyMode = page.proxyMode;
     if (page.auth) body.auth = page.auth;
-  } else if (page.type === 'direct') {
+  } else if (page.type === 'direct' || page.type === 'iframe') {
     body.url = page.url;
   } else if (page.type === 'custom') {
     body.sourceId = page.id;
@@ -511,6 +511,13 @@ function showPage(page) {
     exitMdEdit();
     window.open(page.url, '_blank');
     showWelcome();
+  } else if (page.type === 'iframe') {
+    // 直接嵌入：iframe 直接加载目标 URL，流量不经过 Node 服务
+    mdView.classList.add('hidden');
+    iframeWrap.classList.remove('hidden');
+    exitMdEdit();
+    loadingMask.classList.remove('fade-out');
+    mainFrame.src = page.url;
   } else {
     mdView.classList.add('hidden');
     iframeWrap.classList.remove('hidden');
@@ -1179,9 +1186,10 @@ function setType(type) {
   });
   const isLink = type === 'link';
   const isDirect = type === 'direct';
-  const needUrl = isLink || isDirect;
+  const isIframe = type === 'iframe';
+  const needUrl = isLink || isDirect || isIframe;
   $('urlField').classList.toggle('hidden', !needUrl);
-  // 直链只显示 URL，不显示高级配置（认证/代理/DNS）
+  // 直链和直接嵌入只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.toggle('hidden', !isLink);
   $('authField').classList.toggle('hidden', !isLink);
@@ -1192,7 +1200,9 @@ function setType(type) {
   if (urlLabel) {
     urlLabel.innerHTML = isDirect
       ? '目标链接 <span class="required">*</span>'
-      : '嵌入链接 <span class="required">*</span>';
+      : isIframe
+        ? '嵌入链接 <span class="required">*</span>'
+        : '嵌入链接 <span class="required">*</span>';
   }
   // markdown 页面的正文统一在右侧原地编辑，弹窗不提供内容输入
 }
@@ -1299,7 +1309,7 @@ $('pageForm').addEventListener('submit', async e => {
   const body = {
     type: currentType,
     name: $('fieldName').value.trim(),
-    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗' }[currentType] || '🔗'),
+    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[currentType] || '🔗'),
     group: $('fieldGroup').value || '未分组'
   };
   if (currentType === 'link') {
@@ -1339,7 +1349,7 @@ $('pageForm').addEventListener('submit', async e => {
     } else {
       body.auth = null;
     }
-  } else if (currentType === 'direct') {
+  } else if (currentType === 'direct' || currentType === 'iframe') {
     body.url = $('fieldUrl').value.trim();
   }
   const saveBtn = $('saveBtn');

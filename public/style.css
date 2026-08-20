@@ -65,12 +65,47 @@ body {
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
 }
 
+/* 常驻模式：侧边栏参与 flex 布局，主内容区自动让位 */
+body.sidebar-pinned .sidebar {
+  position: relative;
+  box-shadow: none;
+}
+body.sidebar-pinned .sidebar-trigger {
+  display: none;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 12px 8px;
 }
+
+/* 侧边栏常驻按钮 */
+.sidebar-pin-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.sidebar-pin-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+/* 默认显示未图钉图标，隐藏已图钉图标 */
+.sidebar-pin-btn .pin-icon-pinned { display: none; }
+.sidebar-pin-btn .pin-icon-unpinned { display: block; }
+/* 常驻状态：显示已图钉图标，隐藏未图钉图标 */
+.sidebar-pin-btn.pinned .pin-icon-pinned { display: block; }
+.sidebar-pin-btn.pinned .pin-icon-unpinned { display: none; }
+.sidebar-pin-btn.pinned { color: var(--accent); }
 
 .logo {
   display: flex;

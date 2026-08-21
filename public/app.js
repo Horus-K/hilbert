@@ -21,6 +21,10 @@ let docPageId = null;         // 当前查看文档的页面 ID
 let docEditing = false;       // 是否处于文档编辑模式
 let docContent = '';          // 当前文档内容
 
+// ---------- 标签页状态 ----------
+let tabs = [];                // 已打开的标签列表 [{ id, pageId, viewType, title, icon, mdContent, scrollTop }]
+let activeTabId = null;       // 当前激活的标签 ID
+
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
 const pageList = $('pageList');
@@ -57,6 +61,9 @@ const userAvatar = $('userAvatar');
 const userName = $('userName');
 const userEmail = $('userEmail');
 const logoutBtn = $('logoutBtn');
+const tabPanels = $('tabPanels');
+const tabBar = $('tabBar');
+const tabList = $('tabList');
 
 const modalOverlay = $('modalOverlay');
 const confirmOverlay = $('confirmOverlay');
@@ -347,7 +354,7 @@ function renderSidebar() {
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
         <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>
         <span class="item-actions">
-          <button class="page-doc-btn" title="页面文档">📄</button>
+          ${p.type !== 'markdown' ? '<button class="page-doc-btn" title="页面文档">📄</button>' : ''}
           <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
@@ -368,12 +375,14 @@ function renderSidebar() {
         }
         selectPage(p.id);
       });
-      // 文档按钮
+      // 文档按钮（仅非 markdown 页面有）
       const docBtn = item.querySelector('.page-doc-btn');
-      docBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        openPageDoc(p);
-      });
+      if (docBtn) {
+        docBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          openPageDoc(p);
+        });
+      }
       // 星标按钮
       const favBtn = item.querySelector('.fav-star');
       favBtn.addEventListener('click', e => {
@@ -429,18 +438,271 @@ function renderSidebar() {
 }
 
 function selectPage(id, skipPushState) {
-  if (id === activeId && !mdEditing && !docEditing && !viewingPageDoc && currentView === 'page') return;
-  if (!confirmDiscardIfEditing()) return;
   const page = pages.find(p => p.id === id);
   if (!page) return;
-  activeId = id;
-  exitDocView();
-  renderSidebar();
-  showPage(page);
-  // 更新浏览器地址栏 URL（直链页面除外）
-  if (!skipPushState && page.type !== 'direct') {
-    history.pushState({ pageId: id }, '', '/page/' + id);
+  if (page.type === 'direct') { window.open(page.url, '_blank'); return; }
+  // 已打开且是当前标签：忽略（编辑中除外）
+  const existingTab = tabs.find(t => t.pageId === id);
+  if (existingTab && existingTab.id === activeTabId && !mdEditing && !docEditing && !viewingPageDoc) return;
+  if (!confirmDiscardIfEditing()) return;
+  openTab(page, skipPushState);
+}
+
+// ==================== 标签页管理 ====================
+
+function renderTabs() {
+  tabList.innerHTML = '';
+  if (tabs.length === 0) {
+    tabBar.classList.remove('visible');
+    return;
   }
+  tabBar.classList.add('visible');
+  for (const tab of tabs) {
+    const el = document.createElement('div');
+    el.className = 'tab-item' + (tab.id === activeTabId ? ' active' : '');
+    el.innerHTML = `<span class="tab-icon">${escapeHtml(tab.icon || '🔗')}</span><span class="tab-title">${escapeHtml(tab.title)}</span><button class="tab-close" title="关闭标签">×</button>`;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.tab-close')) return;
+      if (tab.id !== activeTabId) {
+        if (!confirmDiscardIfEditing()) return;
+        activateTab(tab.id);
+      }
+    });
+    el.querySelector('.tab-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(tab.id);
+    });
+    tabList.appendChild(el);
+  }
+  // 滚动到激活的标签
+  const activeEl = tabList.querySelector('.tab-item.active');
+  if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+}
+
+function openTab(page, skipPushState) {
+  // 检查是否已有该页面的标签
+  const existing = tabs.find(t => t.pageId === page.id);
+  if (existing) {
+    activateTab(existing.id);
+    if (!skipPushState) history.pushState({ pageId: page.id }, '', '/page/' + page.id);
+    return;
+  }
+  // 创建新标签
+  const tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const viewType = (page.type === 'markdown') ? 'markdown' : (page.type === 'custom') ? 'custom' : 'iframe';
+  const tab = {
+    id: tabId,
+    pageId: page.id,
+    viewType: viewType,
+    title: page.name,
+    icon: page.icon || (page.type === 'markdown' ? '📝' : '🔗'),
+    mdContent: null,
+    scrollTop: 0
+  };
+  // Markdown 页面预渲染内容
+  if (page.type === 'markdown') {
+    tab.mdContent = marked.parse(page.content || '');
+  }
+  tabs.push(tab);
+  // 为 iframe/custom 标签创建独立面板（保留在 DOM 中以保持状态）
+  if (viewType === 'iframe' || viewType === 'custom') {
+    const panel = document.createElement('div');
+    panel.className = 'tab-panel';
+    panel.id = 'panel-' + tabId;
+    panel.innerHTML = '<div class="loading-mask"><div class="spinner"></div><p>页面加载中…</p></div>';
+    tabPanels.appendChild(panel);
+  }
+  activateTab(tabId);
+  if (!skipPushState) history.pushState({ pageId: page.id }, '', '/page/' + page.id);
+}
+
+function activateTab(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  activeTabId = tabId;
+  activeId = tab.pageId;
+  currentView = 'page';
+  exitDocView();
+  // 隐藏所有默认视图 + 所有标签面板
+  welcomeView.classList.add('hidden');
+  settingsView.classList.add('hidden');
+  iframeWrap.classList.add('hidden');
+  mdView.classList.add('hidden');
+  customView.classList.add('hidden');
+  tabPanels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  // 更新标签数据（标题/图标可能因页面编辑而变化）
+  const page = pages.find(p => p.id === tab.pageId);
+  if (page) {
+    tab.title = page.name;
+    tab.icon = page.icon || (page.type === 'markdown' ? '📝' : '🔗');
+  }
+  // 按类型显示内容
+  if (tab.viewType === 'iframe' || tab.viewType === 'custom') {
+    const panel = document.getElementById('panel-' + tabId);
+    if (panel) {
+      panel.classList.add('active');
+      let iframe = panel.querySelector('iframe');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.title = tab.title + ' - 嵌入页面';
+        iframe.referrerPolicy = 'no-referrer';
+        panel.appendChild(iframe);
+        iframe.addEventListener('load', () => {
+          const mask = panel.querySelector('.loading-mask');
+          if (mask) mask.classList.add('fade-out');
+        });
+        // 设置 iframe src
+        if (page) {
+          if (tab.viewType === 'custom') {
+            const entry = page.entry || 'index.html';
+            iframe.src = '/hilbert-custom/' + page.id + '/' + entry;
+          } else if (page.type === 'iframe') {
+            iframe.src = page.url;
+          } else {
+            const pageUrl = new URL(page.url);
+            const pagePath = pageUrl.pathname.replace(/\/+$/, '');
+            iframe.src = (page.proxyMode === 'mount' ? '/hilbert-proxy/' + page.id + '/' : (pagePath || '/'))
+              + (pageUrl.search || '');
+          }
+        }
+      }
+    }
+  } else if (tab.viewType === 'markdown') {
+    mdView.classList.remove('hidden');
+    exitMdEdit();
+    mdToolbarIcon.textContent = tab.icon || '📝';
+    mdToolbarTitle.textContent = tab.title;
+    mdEditBtn.classList.toggle('hidden', !canEditPage(tab.pageId));
+    // 使用缓存的渲染内容（保留滚动位置等状态）
+    if (tab.mdContent !== null) {
+      mdBody.innerHTML = tab.mdContent;
+    } else if (page) {
+      mdBody.innerHTML = marked.parse(page.content || '');
+      tab.mdContent = mdBody.innerHTML;
+    }
+    mdView.scrollTop = tab.scrollTop || 0;
+  }
+  // 收起侧边栏（常驻模式下不收起）
+  if (!sidebarPinned) $('sidebar').classList.add('collapsed');
+  renderTabs();
+  renderSidebar();
+  updateSidebarTrigger();
+  saveViewState();
+}
+
+function closeTab(tabId) {
+  const idx = tabs.findIndex(t => t.id === tabId);
+  if (idx < 0) return;
+  // 关闭前确认未保存的编辑
+  const tab = tabs[idx];
+  if (tab.id === activeTabId) {
+    if (mdEditing && isMdDirty()) {
+      if (!confirm('文档内容尚未保存，确定要关闭标签吗？')) return;
+    }
+    if (docEditing && isDocDirty()) {
+      if (!confirm('文档内容尚未保存，确定要关闭标签吗？')) return;
+    }
+  }
+  // 移除面板
+  if (tab.viewType === 'iframe' || tab.viewType === 'custom') {
+    const panel = document.getElementById('panel-' + tabId);
+    if (panel) panel.remove();
+  }
+  tabs.splice(idx, 1);
+  if (activeTabId === tabId) {
+    activeTabId = null;
+    if (tabs.length > 0) {
+      const newIdx = Math.min(idx, tabs.length - 1);
+      activateTab(tabs[newIdx].id);
+    } else {
+      // 无标签，显示欢迎页
+      activeId = null;
+      currentView = 'welcome';
+      iframeWrap.classList.add('hidden');
+      mdView.classList.add('hidden');
+      customView.classList.add('hidden');
+      settingsView.classList.add('hidden');
+      welcomeView.classList.remove('hidden');
+      renderSidebar();
+      updateSidebarTrigger();
+      saveViewState();
+      history.pushState(null, '', '/');
+    }
+  } else {
+    renderTabs();
+  }
+  saveViewState();
+}
+
+function closeAllTabs() {
+  tabs = [];
+  activeTabId = null;
+  tabPanels.innerHTML = '';
+  tabBar.classList.remove('visible');
+}
+
+function saveTabs() {
+  try {
+    // 更新当前激活标签的 markdown 内容缓存
+    if (activeTabId) {
+      const activeTab = tabs.find(t => t.id === activeTabId);
+      if (activeTab && activeTab.viewType === 'markdown') {
+        activeTab.mdContent = mdBody.innerHTML;
+        activeTab.scrollTop = mdView.scrollTop;
+      }
+    }
+    const tabData = tabs.map(t => ({
+      id: t.id,
+      pageId: t.pageId,
+      viewType: t.viewType,
+      title: t.title,
+      icon: t.icon
+    }));
+    sessionStorage.setItem('hilbert_tabs', JSON.stringify({ tabs: tabData, activeTabId }));
+  } catch { /* 忽略 */ }
+}
+
+function restoreTabs() {
+  try {
+    const raw = sessionStorage.getItem('hilbert_tabs');
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data.tabs || data.tabs.length === 0) return false;
+    let restored = false;
+    for (const td of data.tabs) {
+      const page = pages.find(p => p.id === td.pageId);
+      if (!page) continue; // 页面已删除，跳过
+      const tab = {
+        id: td.id,
+        pageId: td.pageId,
+        viewType: td.viewType,
+        title: page.name,
+        icon: page.icon || td.icon || '🔗',
+        mdContent: null,
+        scrollTop: 0
+      };
+      if (tab.viewType === 'markdown') {
+        tab.mdContent = marked.parse(page.content || '');
+      }
+      tabs.push(tab);
+      if (tab.viewType === 'iframe' || tab.viewType === 'custom') {
+        const panel = document.createElement('div');
+        panel.className = 'tab-panel';
+        panel.id = 'panel-' + tab.id;
+        panel.innerHTML = '<div class="loading-mask"><div class="spinner"></div><p>页面加载中…</p></div>';
+        tabPanels.appendChild(panel);
+      }
+      restored = true;
+    }
+    if (restored) {
+      const targetId = data.activeTabId && tabs.find(t => t.id === data.activeTabId)
+        ? data.activeTabId
+        : tabs[tabs.length - 1].id;
+      activateTab(targetId);
+      return true;
+    }
+  } catch { /* 忽略 */ }
+  return false;
 }
 
 // 关闭所有已展开的页面项菜单（点击其他区域时由 document 监听触发）
@@ -482,66 +744,8 @@ async function duplicatePage(page) {
 
 // 根据页面类型切换右侧展示：link → iframe，markdown → 渲染文档
 function showPage(page) {
-  currentView = 'page';
-  // 点击页面后收起侧边栏（常驻模式下不收起）
-  if (!sidebarPinned) $('sidebar').classList.add('collapsed');
-  welcomeView.classList.add('hidden');
-  settingsView.classList.add('hidden');
-
-  if (page.type === 'markdown') {
-    iframeWrap.classList.add('hidden');
-    mdView.classList.remove('hidden');
-    customView.classList.add('hidden');
-    loadingMask.classList.add('fade-out');
-    exitMdEdit();
-    // 更新工具栏标题和图标
-    mdToolbarIcon.textContent = page.icon || '📝';
-    mdToolbarTitle.textContent = page.name;
-    // 根据权限控制编辑按钮
-    mdEditBtn.classList.toggle('hidden', !canEditPage(page.id));
-    renderMarkdown(page);
-  } else if (page.type === 'custom') {
-    iframeWrap.classList.add('hidden');
-    mdView.classList.add('hidden');
-    customView.classList.remove('hidden');
-    welcomeView.classList.add('hidden');
-    settingsView.classList.add('hidden');
-    loadingMask.classList.add('fade-out');
-    exitMdEdit();
-    const entry = page.entry || 'index.html';
-    customFrame.src = '/hilbert-custom/' + page.id + '/' + entry;
-  } else if (page.type === 'direct') {
-    // 直链页面：新标签页打开后回到欢迎页
-    iframeWrap.classList.add('hidden');
-    mdView.classList.add('hidden');
-    customView.classList.add('hidden');
-    exitMdEdit();
-    window.open(page.url, '_blank');
-    showWelcome();
-  } else if (page.type === 'iframe') {
-    // 直接嵌入：iframe 直接加载目标 URL，流量不经过 Node 服务
-    mdView.classList.add('hidden');
-    iframeWrap.classList.remove('hidden');
-    exitMdEdit();
-    loadingMask.classList.remove('fade-out');
-    mainFrame.src = page.url;
-  } else {
-    mdView.classList.add('hidden');
-    iframeWrap.classList.remove('hidden');
-    exitMdEdit();
-    loadingMask.classList.remove('fade-out');
-    // link 页面一律走反向代理：剥离目标站的 iframe 嵌入限制、改写 Origin/Referer
-    // 通过 CSRF 校验；直连目标 URL 会因跨域被目标站拒绝（如 Grafana 的 origin not allowed）
-    // 新架构：代理路径直接使用页面 URL 的路径部分（如 /xxl-job-admin/）；
-    // 挂载模式（编辑页面指定 proxyMode=mount）统一从 /hilbert-proxy/<id> 进入，
-    // 适用于根路径站点（与面板根路径冲突）或恒等映射异常的站点
-    const pageUrl = new URL(page.url);
-    const pagePath = pageUrl.pathname.replace(/\/+$/, '');
-    mainFrame.src = (page.proxyMode === 'mount' ? '/hilbert-proxy/' + page.id + '/' : (pagePath || '/'))
-      + (pageUrl.search || '');
-  }
-  updateSidebarTrigger();
-  saveViewState();
+  // 委托给标签系统：每个页面在独立标签中打开
+  openTab(page);
 }
 
 function renderMarkdown(page) {
@@ -553,6 +757,7 @@ function renderMarkdown(page) {
 function saveViewState() {
   try {
     sessionStorage.setItem('hilbert_view', JSON.stringify({ view: currentView, activeId }));
+    saveTabs();
   } catch { /* 忽略 */ }
 }
 
@@ -569,6 +774,7 @@ function showWelcome() {
   currentView = 'welcome';
   activeId = null;
   exitMdEdit();
+  closeAllTabs();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
   customView.classList.add('hidden');
@@ -597,6 +803,7 @@ function showSettings() {
   if (!sidebarPinned) $('sidebar').classList.add('collapsed');
   activeId = null;
   exitMdEdit();
+  closeAllTabs();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
   customView.classList.add('hidden');
@@ -1243,8 +1450,14 @@ function exitDocView() {
 
 // 编辑中离开页面前的丢弃确认（包含文档编辑状态）
 function confirmDiscardIfEditing() {
-  if (mdEditing && isMdDirty()) {
-    return confirm('文档内容尚未保存，确定要离开吗？');
+  // 检查所有标签的未保存编辑
+  for (const tab of tabs) {
+    if (tab.viewType === 'markdown' && tab.id === activeTabId && mdEditing) {
+      const page = pages.find(p => p.id === tab.pageId);
+      if (page && mdEditor.value !== (page.content || '')) {
+        return confirm('文档内容尚未保存，确定要离开吗？');
+      }
+    }
   }
   if (docEditing && isDocDirty()) {
     return confirm('文档内容尚未保存，确定要离开吗？');
@@ -1268,6 +1481,11 @@ async function saveMdEdit() {
     Object.assign(page, updated);
     exitMdEdit();
     renderMarkdown(page);
+    // 同步更新标签缓存
+    const tab = tabs.find(t => t.pageId === page.id);
+    if (tab) {
+      tab.mdContent = mdBody.innerHTML;
+    }
     showToast('文档已保存');
   } catch (err) {
     showToast(err.message);
@@ -1543,7 +1761,25 @@ $('confirmDelete').addEventListener('click', async () => {
   try {
     await api('/' + deletingId, { method: 'DELETE' });
     showToast('页面已删除');
+    // 关闭该页面关联的所有标签
+    const relatedTabs = tabs.filter(t => t.pageId === deletingId);
+    for (const t of relatedTabs) {
+      const panel = document.getElementById('panel-' + t.id);
+      if (panel) panel.remove();
+    }
+    tabs = tabs.filter(t => t.pageId !== deletingId);
     if (activeId === deletingId) activeId = null;
+    // 如果关闭的是当前激活标签，切换到相邻标签或显示欢迎页
+    if (relatedTabs.some(t => t.id === activeTabId)) {
+      activeTabId = null;
+      if (tabs.length > 0) {
+        activateTab(tabs[0].id);
+      } else {
+        showWelcome();
+      }
+    } else {
+      renderTabs();
+    }
     confirmOverlay.classList.add('hidden');
     await refresh();
   } catch (err) {
@@ -1728,14 +1964,31 @@ async function refresh() {
   pages = await api('');
   // 修正失效的 activeId
   if (activeId && !pages.some(p => p.id === activeId)) activeId = null;
+  // 清理已删除页面的标签
+  const deletedPageIds = tabs.map(t => t.pageId).filter(pid => !pages.some(p => p.id === pid));
+  if (deletedPageIds.length > 0) {
+    for (const pid of deletedPageIds) {
+      const relatedTabs = tabs.filter(t => t.pageId === pid);
+      for (const t of relatedTabs) {
+        const panel = document.getElementById('panel-' + t.id);
+        if (panel) panel.remove();
+      }
+      tabs = tabs.filter(t => t.pageId !== pid);
+    }
+    if (activeTabId && !tabs.find(t => t.id === activeTabId)) {
+      activeTabId = null;
+      if (tabs.length > 0) {
+        activateTab(tabs[tabs.length - 1].id);
+      }
+    }
+    renderTabs();
+  }
   renderSidebar();
-
-  if (currentView === 'page') {
-    const active = pages.find(p => p.id === activeId);
-    if (active) {
-      showPage(active);
-    } else {
-      showWelcome();
+  // 如果当前在标签页视图中，刷新激活的标签
+  if (currentView === 'page' && activeTabId) {
+    const activeTab = tabs.find(t => t.id === activeTabId);
+    if (activeTab) {
+      activateTab(activeTab.id);
     }
   }
 }
@@ -1772,35 +2025,41 @@ async function init() {
     return;
   }
   renderSidebar();
-  // 优先从 URL 检测当前页面（/page/:id 格式）
+  // 优先恢复标签状态
   const pathMatch = location.pathname.match(/^\/page\/([^/]+)/);
   if (pathMatch) {
     const urlPageId = decodeURIComponent(pathMatch[1]);
     const target = pages.find(p => p.id === urlPageId);
     if (target && target.type !== 'direct') {
-      activeId = urlPageId;
-      currentView = 'page';
-      showPage(target);
-      renderSidebar();
+      // 尝试恢复标签，或打开指定页面
+      if (!restoreTabs()) {
+        activeId = urlPageId;
+        currentView = 'page';
+        showPage(target);
+        renderSidebar();
+      }
     } else {
       showWelcome();
     }
   } else {
-    const saved = restoreViewState();
-    if (saved && saved.view === 'settings' && isAdmin) {
-      showSettings();
-    } else if (saved && saved.view === 'page' && saved.activeId) {
-      const target = pages.find(p => p.id === saved.activeId);
-      if (target && target.type !== 'direct') {
-        activeId = saved.activeId;
-        currentView = 'page';
-        showPage(target);
-        renderSidebar();
+    // 尝试恢复标签
+    if (!restoreTabs()) {
+      const saved = restoreViewState();
+      if (saved && saved.view === 'settings' && isAdmin) {
+        showSettings();
+      } else if (saved && saved.view === 'page' && saved.activeId) {
+        const target = pages.find(p => p.id === saved.activeId);
+        if (target && target.type !== 'direct') {
+          activeId = saved.activeId;
+          currentView = 'page';
+          showPage(target);
+          renderSidebar();
+        } else {
+          showWelcome();
+        }
       } else {
-        showWelcome();
+        showWelcome(); // 无保存状态时默认欢迎页
       }
-    } else {
-      showWelcome(); // 无保存状态时默认欢迎页
     }
   }
 
@@ -1819,7 +2078,20 @@ window.addEventListener('popstate', () => {
   const match = location.pathname.match(/^\/page\/([^/]+)/);
   if (match) {
     const pageId = decodeURIComponent(match[1]);
-    selectPage(pageId, true);
+    // 查找已打开的标签
+    const existingTab = tabs.find(t => t.pageId === pageId);
+    if (existingTab) {
+      if (!confirmDiscardIfEditing()) return;
+      activateTab(existingTab.id);
+    } else {
+      if (!confirmDiscardIfEditing()) return;
+      const page = pages.find(p => p.id === pageId);
+      if (page && page.type !== 'direct') {
+        openTab(page, true);
+      } else {
+        showWelcome();
+      }
+    }
   } else {
     showWelcome();
   }

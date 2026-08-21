@@ -76,7 +76,13 @@
 
     <!-- 右侧内容区 -->
     <main class="main">
+      <!-- 标签栏 -->
+      <div class="tab-bar" id="tabBar">
+        <div class="tab-list" id="tabList"></div>
+      </div>
       <section class="content">
+        <!-- 标签面板容器（每个 iframe/custom 标签独立面板，保持在 DOM 中以保留状态） -->
+        <div class="tab-panels" id="tabPanels"></div>
         <div class="iframe-wrap hidden" id="iframeWrap">
           <div class="loading-mask" id="loadingMask">
             <div class="spinner"></div>

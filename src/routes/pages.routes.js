@@ -75,4 +75,23 @@ router.delete('/:id/files/:filename', (req, res) => {
   res.json(result);
 });
 
+// 获取页面专属文档
+router.get('/:id/doc', (req, res) => {
+  if (!hasPermission(req.user.email, req.params.id, 'read')) {
+    throw new AppError('没有查看该页面的权限', 403);
+  }
+  const doc = pagesService.getPageDoc(req.params.id);
+  res.json(doc);
+});
+
+// 更新页面专属文档
+router.put('/:id/doc', (req, res) => {
+  if (!hasPermission(req.user.email, req.params.id, 'update')) {
+    throw new AppError('没有修改该页面的权限', 403);
+  }
+  const { content } = req.body;
+  const doc = pagesService.updatePageDoc(req.params.id, content);
+  res.json(doc);
+});
+
 module.exports = router;

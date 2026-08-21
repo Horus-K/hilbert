@@ -35,10 +35,13 @@ function registerRoutes(app, proxy) {
   app.use('/hilbert-api/groups', require('./groups.routes'));
   app.use('/hilbert-api/favorites', require('./favorites.routes'));
 
-  // 6. 自定义页面静态托管
+  // 6. 独立页面查看器（每个页面拥有独立浏览器 URL）
+  app.use('/page', require('./page.routes'));
+
+  // 7. 自定义页面静态托管
   app.use('/hilbert-custom', proxy.customPagesDispatcher);
 
-  // 7. Referer 兜底代理（最后注册）
+  // 8. Referer 兜底代理（最后注册）
   app.use(proxy.createRefererFallback());
 }
 

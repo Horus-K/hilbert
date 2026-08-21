@@ -16,6 +16,10 @@ let editingRoleId = null;     // 当前编辑的角色 ID（null 为新建）
 let favorites = [];           // 当前用户收藏的页面 ID 列表
 let currentUserEmail = '';    // 当前用户邮箱（用于 localStorage 隔离）
 let collapsedGroups = [];     // 已折叠的分组名列表（默认全部折叠）
+let viewingPageDoc = false;   // 是否正在查看页面专属文档
+let docPageId = null;         // 当前查看文档的页面 ID
+let docEditing = false;       // 是否处于文档编辑模式
+let docContent = '';          // 当前文档内容
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -343,6 +347,7 @@ function renderSidebar() {
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
         <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>
         <span class="item-actions">
+          <button class="page-doc-btn" title="页面文档">📄</button>
           <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
           ${p.type !== 'direct' ? `<button class="open-external" title="在新标签页打开"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ''}
           <button class="more" title="更多操作">
@@ -363,6 +368,12 @@ function renderSidebar() {
           return;
         }
         selectPage(p.id);
+      });
+      // 文档按钮
+      const docBtn = item.querySelector('.page-doc-btn');
+      docBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        openPageDoc(p);
       });
       // 星标按钮
       const favBtn = item.querySelector('.fav-star');
@@ -427,11 +438,13 @@ function renderSidebar() {
 }
 
 function selectPage(id) {
-  if (id === activeId && !mdEditing && currentView === 'page') return;
+  if (id === activeId && !mdEditing && !docEditing && currentView === 'page') return;
   if (!confirmDiscardIfEditing()) return;
   const page = pages.find(p => p.id === id);
   if (!page) return;
   activeId = id;
+  viewingPageDoc = false;
+  docPageId = null;
   renderSidebar();
   showPage(page);
 }
@@ -1130,10 +1143,117 @@ function isMdDirty() {
   return mdEditing && page && mdEditor.value !== (page.content || '');
 }
 
-// 编辑中离开页面前的丢弃确认，返回 true 表示可以继续
+// ---------- 页面专属文档 ----------
+async function openPageDoc(page) {
+  if (!confirmDiscardIfEditing()) return;
+  viewingPageDoc = true;
+  docPageId = page.id;
+  docEditing = false;
+  currentView = 'page';
+
+  // 切换右侧视图
+  iframeWrap.classList.add('hidden');
+  customView.classList.add('hidden');
+  mdView.classList.remove('hidden');
+  welcomeView.classList.add('hidden');
+  settingsView.classList.add('hidden');
+  exitMdEdit();
+
+  // 更新工具栏
+  mdToolbarIcon.textContent = '📄';
+  mdToolbarTitle.textContent = page.name + ' - 文档';
+  mdEditBtn.classList.remove('hidden');
+  mdSaveBtn.classList.add('hidden');
+  mdCancelBtn.classList.add('hidden');
+
+  // 加载文档内容
+  try {
+    const doc = await api('/' + page.id + '/doc');
+    docContent = doc.content || '';
+    if (docContent) {
+      mdBody.innerHTML = marked.parse(docContent);
+    } else {
+      mdBody.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">暂无文档，点击右上角「编辑」开始编写</p>';
+    }
+  } catch (err) {
+    showToast('加载文档失败: ' + err.message);
+    docContent = '';
+    mdBody.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">暂无文档</p>';
+  }
+  mdView.scrollTop = 0;
+  loadingMask.classList.add('fade-out');
+  updateSidebarTrigger();
+  saveViewState();
+}
+
+function enterDocEdit() {
+  if (!docPageId) return;
+  docEditing = true;
+  mdEditor.value = docContent || '';
+  mdBody.classList.add('hidden');
+  mdEditor.classList.remove('hidden');
+  mdView.classList.add('editing');
+  mdView.scrollTop = 0;
+  mdEditor.focus();
+  mdEditBtn.classList.add('hidden');
+  mdSaveBtn.classList.remove('hidden');
+  mdCancelBtn.classList.remove('hidden');
+}
+
+function exitDocEdit() {
+  docEditing = false;
+  mdEditor.classList.add('hidden');
+  mdBody.classList.remove('hidden');
+  mdView.classList.remove('editing');
+  mdSaveBtn.classList.add('hidden');
+  mdCancelBtn.classList.add('hidden');
+  mdEditBtn.classList.remove('hidden');
+}
+
+function isDocDirty() {
+  return docEditing && mdEditor.value !== (docContent || '');
+}
+
+async function saveDocEdit() {
+  if (!docPageId) return;
+  const content = mdEditor.value;
+  try {
+    const result = await api('/' + docPageId + '/doc', {
+      method: 'PUT',
+      body: JSON.stringify({ content })
+    });
+    docContent = result.content || '';
+    exitDocEdit();
+    if (docContent) {
+      mdBody.innerHTML = marked.parse(docContent);
+    } else {
+      mdBody.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">暂无文档，点击右上角「编辑」开始编写</p>';
+    }
+    showToast('文档已保存');
+    // 刷新侧边栏以更新 hasDoc 状态
+    await refresh();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function exitDocView() {
+  viewingPageDoc = false;
+  docPageId = null;
+  docEditing = false;
+  docContent = '';
+  exitDocEdit();
+}
+
+// 编辑中离开页面前的丢弃确认（包含文档编辑状态）
 function confirmDiscardIfEditing() {
-  if (!isMdDirty()) return true;
-  return confirm('文档内容尚未保存，确定要离开吗？');
+  if (mdEditing && isMdDirty()) {
+    return confirm('文档内容尚未保存，确定要离开吗？');
+  }
+  if (docEditing && isDocDirty()) {
+    return confirm('文档内容尚未保存，确定要离开吗？');
+  }
+  return true;
 }
 
 async function saveMdEdit() {
@@ -1160,18 +1280,40 @@ async function saveMdEdit() {
 
 // 编辑模式下 Ctrl+S 保存
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && mdEditing) {
-    e.preventDefault();
-    saveMdEdit();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    if (mdEditing) {
+      e.preventDefault();
+      saveMdEdit();
+    } else if (docEditing) {
+      e.preventDefault();
+      saveDocEdit();
+    }
   }
 });
 
 // 工具栏按钮事件
-mdEditBtn.addEventListener('click', () => enterMdEdit());
-mdSaveBtn.addEventListener('click', () => saveMdEdit());
+mdEditBtn.addEventListener('click', () => {
+  if (viewingPageDoc) {
+    enterDocEdit();
+  } else {
+    enterMdEdit();
+  }
+});
+mdSaveBtn.addEventListener('click', () => {
+  if (viewingPageDoc) {
+    saveDocEdit();
+  } else {
+    saveMdEdit();
+  }
+});
 mdCancelBtn.addEventListener('click', () => {
-  if (isMdDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
-  exitMdEdit();
+  if (viewingPageDoc) {
+    if (isDocDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
+    exitDocEdit();
+  } else {
+    if (isMdDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
+    exitMdEdit();
+  }
 });
 
 mainFrame.addEventListener('load', () => {

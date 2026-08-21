@@ -6,12 +6,13 @@ const { isValidUrl, normalizeAuth } = require('../utils/validators');
 const pagesRepo = require('../repositories/pages.repository');
 const markdownSvc = require('./markdown.service');
 const customPagesSvc = require('./custom-pages.service');
+const pageDocsSvc = require('./page-docs.service');
 
 /**
  * 获取全部页面（按权限过滤）
  */
 function getAllPages(email, adminCheck, permCheck) {
-  const allPages = pagesRepo.read().map(markdownSvc.resolvePage);
+  const allPages = pagesRepo.read().map(markdownSvc.resolvePage).map(pageDocsSvc.resolvePageDoc);
   if (adminCheck(email)) return allPages;
   return allPages.filter(p => permCheck(email, p.id, 'read'));
 }
@@ -157,6 +158,7 @@ function deletePage(id) {
 
   const [removed] = pages.splice(idx, 1);
   markdownSvc.deleteMdFile(removed.content);
+  pageDocsSvc.deletePageDoc(removed.id);
   customPagesSvc.deleteCustomPageDir(removed.id);
   pagesRepo.write(pages);
   return removed;
@@ -176,3 +178,32 @@ function togglePin(id) {
 }
 
 module.exports = { getAllPages, createPage, updatePage, deletePage, togglePin };
+
+/**
+ * 获取页面专属文档内容
+ */
+function getPageDoc(pageId) {
+  const pages = pagesRepo.read();
+  const idx = pages.findIndex(p => p.id === pageId);
+  if (idx === -1) throw new AppError('页面不存在', 404);
+  const content = pageDocsSvc.readPageDoc(pageId);
+  return { pageId, content, hasDoc: content !== null };
+}
+
+/**
+ * 更新页面专属文档
+ */
+function updatePageDoc(pageId, content) {
+  const pages = pagesRepo.read();
+  const idx = pages.findIndex(p => p.id === pageId);
+  if (idx === -1) throw new AppError('页面不存在', 404);
+  if (!content || !content.trim()) {
+    pageDocsSvc.deletePageDoc(pageId);
+    return { pageId, content: '', hasDoc: false };
+  }
+  pageDocsSvc.writePageDoc(pageId, content);
+  return { pageId, content, hasDoc: true };
+}
+
+module.exports.getPageDoc = getPageDoc;
+module.exports.updatePageDoc = updatePageDoc;

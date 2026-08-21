@@ -1823,6 +1823,24 @@ body.sidebar-pinned .sidebar-trigger {
 
 /* ================= 星标按钮 ================= */
 
+/* 页面文档按钮 */
+.page-doc-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.page-doc-btn:hover {
+  color: #3b82f6;
+}
+
 .fav-star {
   background: transparent;
   border: none;

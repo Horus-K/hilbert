@@ -17,6 +17,10 @@ const CUSTOM_PAGES_DIR = path.join(DATA_DIR, 'custom-pages');
 // 用户收藏存储
 const FAVORITES_DIR = path.join(DATA_DIR, 'favorites');
 
+// 页面专属文档存储
+const PAGE_DOCS_DIR = path.join(DATA_DIR, 'page-docs');
+const DOC_PREFIX = '/data/page-docs/';
+
 // 业务常量
 const PAGE_TYPES = ['link', 'markdown', 'custom', 'direct', 'iframe'];
 const ALL_ACTIONS = ['read', 'create', 'update', 'delete'];
@@ -49,6 +53,8 @@ module.exports = {
   CONTENT_PREFIX,
   CUSTOM_PAGES_DIR,
   FAVORITES_DIR,
+  PAGE_DOCS_DIR,
+  DOC_PREFIX,
   PAGE_TYPES,
   ALL_ACTIONS,
   DEFAULT_PAGES,

@@ -40,6 +40,7 @@ const mdToolbarTitle = $('mdToolbarTitle');
 const mdEditBtn = $('mdEditBtn');
 const mdSaveBtn = $('mdSaveBtn');
 const mdCancelBtn = $('mdCancelBtn');
+const mdCloseBtn = $('mdCloseBtn');
 const welcomeView = $('welcomeView');
 const settingsView = $('settingsView');
 const groupList = $('groupList');
@@ -225,7 +226,7 @@ function renderFavorites() {
     favoritesSection.classList.add('empty');
     const hint = document.createElement('div');
     hint.className = 'favorites-empty-hint';
-    hint.textContent = '点击页面星标添加收藏';
+    hint.textContent = '点击页面更多操作添加收藏';
     favoritesList.appendChild(hint);
     return;
   }
@@ -348,18 +349,18 @@ function renderSidebar() {
       const isDirect = p.type === 'direct';
       const isFav = isFavorited(p.id);
       const isPinned = !!p.pinned;
-      item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '') + (isPinned ? ' is-pinned' : '');
+      item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '') + (isPinned ? ' is-pinned' : '') + (p.hasDoc && p.type !== 'markdown' ? ' has-doc' : '');
       item.innerHTML = `
         <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
         <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>
         <span class="item-actions">
-          ${p.type !== 'markdown' ? '<button class="page-doc-btn" title="页面文档">📄</button>' : ''}
-          <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
+          ${p.type !== 'markdown' ? '<button class="page-doc-btn' + (p.hasDoc ? ' active' : '') + (viewingPageDoc && docPageId === p.id ? ' viewing' : '') + '" title="页面文档">📄</button>' : ''}
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
           <div class="item-menu">
+            <button class="menu-fav">${isFav ? '★ 取消收藏' : '☆ 添加收藏'}</button>
             ${isAdmin ? `<button class="menu-pin">${isPinned ? '📌 取消置顶' : '📍 置顶'}</button>` : ''}
             ${canCopy ? '<button class="menu-copy">复制</button>' : ''}
             ${canEdit ? '<button class="menu-edit">编辑</button>' : ''}
@@ -380,15 +381,25 @@ function renderSidebar() {
       if (docBtn) {
         docBtn.addEventListener('click', e => {
           e.stopPropagation();
+          // 再次点击同一页面文档按钮时关闭文档
+          if (viewingPageDoc && docPageId === p.id) {
+            if (!confirmDiscardIfEditing()) return;
+            exitDocView();
+            renderSidebar();
+            showPage(p);
+            return;
+          }
           openPageDoc(p);
         });
       }
-      // 星标按钮
-      const favBtn = item.querySelector('.fav-star');
-      favBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        toggleFavorite(p.id);
-      });
+      // 收藏按钮（在更多操作菜单内）
+      const favMenuItem = item.querySelector('.menu-fav');
+      if (favMenuItem) {
+        favMenuItem.addEventListener('click', e => {
+          e.stopPropagation();
+          toggleFavorite(p.id);
+        });
+      }
       // 三点菜单：展开/收起，同一时间只保留一个打开的菜单
       // 用 fixed 定位避开 .page-list 的 overflow 裁剪，位置按按钮实际坐标计算
       const menu = item.querySelector('.item-menu');
@@ -774,10 +785,12 @@ function showWelcome() {
   currentView = 'welcome';
   activeId = null;
   exitMdEdit();
+  exitDocView();
   closeAllTabs();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
   customView.classList.add('hidden');
+  tabPanels.classList.add('hidden');
   settingsView.classList.add('hidden');
   welcomeView.classList.remove('hidden');
   loadingMask.classList.add('fade-out');
@@ -803,10 +816,12 @@ function showSettings() {
   if (!sidebarPinned) $('sidebar').classList.add('collapsed');
   activeId = null;
   exitMdEdit();
+  exitDocView();
   closeAllTabs();
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
   customView.classList.add('hidden');
+  tabPanels.classList.add('hidden');
   welcomeView.classList.add('hidden');
   settingsView.classList.remove('hidden');
   groupError.classList.add('hidden');
@@ -1360,6 +1375,7 @@ async function openPageDoc(page) {
   mdView.classList.remove('hidden');
   welcomeView.classList.add('hidden');
   settingsView.classList.add('hidden');
+  tabPanels.classList.add('hidden');
   exitMdEdit();
 
   // 更新工具栏
@@ -1368,6 +1384,7 @@ async function openPageDoc(page) {
   mdEditBtn.classList.remove('hidden');
   mdSaveBtn.classList.add('hidden');
   mdCancelBtn.classList.add('hidden');
+  mdCloseBtn.classList.remove('hidden');
 
   // 加载文档内容
   try {
@@ -1401,6 +1418,7 @@ function enterDocEdit() {
   mdEditBtn.classList.add('hidden');
   mdSaveBtn.classList.remove('hidden');
   mdCancelBtn.classList.remove('hidden');
+  mdCloseBtn.classList.add('hidden');
 }
 
 function exitDocEdit() {
@@ -1411,6 +1429,7 @@ function exitDocEdit() {
   mdSaveBtn.classList.add('hidden');
   mdCancelBtn.classList.add('hidden');
   mdEditBtn.classList.remove('hidden');
+  if (viewingPageDoc) mdCloseBtn.classList.remove('hidden');
 }
 
 function isDocDirty() {
@@ -1446,6 +1465,8 @@ function exitDocView() {
   docEditing = false;
   docContent = '';
   exitDocEdit();
+  mdCloseBtn.classList.add('hidden');
+  tabPanels.classList.remove('hidden');
 }
 
 // 编辑中离开页面前的丢弃确认（包含文档编辑状态）
@@ -1528,6 +1549,15 @@ mdCancelBtn.addEventListener('click', () => {
     if (isMdDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
     exitMdEdit();
   }
+});
+
+mdCloseBtn.addEventListener('click', () => {
+  if (!viewingPageDoc) return;
+  if (isDocDirty() && !confirm('内容尚未保存，确定要放弃修改吗？')) return;
+  const page = pages.find(p => p.id === docPageId);
+  exitDocView();
+  renderSidebar();
+  if (page) showPage(page);
 });
 
 mainFrame.addEventListener('load', () => {

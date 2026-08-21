@@ -247,6 +247,9 @@ body.sidebar-pinned .sidebar-trigger {
 
 .page-item:hover .item-actions { display: flex; }
 
+/* 有文档的页面始终显示操作按钮 */
+.page-item.has-doc .item-actions { display: flex; }
+
 .item-actions button {
   background: transparent;
   border: none;
@@ -1841,25 +1844,31 @@ body.sidebar-pinned .sidebar-trigger {
   color: #3b82f6;
 }
 
-.fav-star {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 0 2px;
-  border-radius: 4px;
-  line-height: 1;
-  flex-shrink: 0;
-  transition: color 0.15s;
+.page-doc-btn.active {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  text-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
 }
 
-.fav-star:hover {
-  color: #f59e0b;
+.page-doc-btn.viewing {
+  color: #2563eb;
+  background: rgba(59, 130, 246, 0.22);
+  text-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
 }
 
-.fav-star.favorited {
-  color: #f59e0b;
+.md-close-btn {
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  color: #ef4444 !important;
+}
+
+.md-close-btn:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+/* 收藏菜单项 */
+.menu-fav {
+  color: #f59e0b !important;
 }
 
 /* 直链页面项样式提示 */

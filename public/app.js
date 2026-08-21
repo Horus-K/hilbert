@@ -438,13 +438,12 @@ function renderSidebar() {
 }
 
 function selectPage(id) {
-  if (id === activeId && !mdEditing && !docEditing && currentView === 'page') return;
+  if (id === activeId && !mdEditing && !docEditing && !viewingPageDoc && currentView === 'page') return;
   if (!confirmDiscardIfEditing()) return;
   const page = pages.find(p => p.id === id);
   if (!page) return;
   activeId = id;
-  viewingPageDoc = false;
-  docPageId = null;
+  exitDocView();
   renderSidebar();
   showPage(page);
 }

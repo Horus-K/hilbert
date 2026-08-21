@@ -1862,25 +1862,6 @@ body.sidebar-pinned .sidebar-trigger {
   color: #f59e0b;
 }
 
-/* 新标签页打开按钮 */
-.open-external {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0 2px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: color 0.15s;
-}
-
-.open-external:hover {
-  color: var(--text-primary);
-}
-
 /* 直链页面项样式提示 */
 .page-item.is-direct {
   cursor: default;

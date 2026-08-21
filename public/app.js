@@ -349,7 +349,6 @@ function renderSidebar() {
         <span class="item-actions">
           <button class="page-doc-btn" title="页面文档">📄</button>
           <button class="fav-star ${isFav ? 'favorited' : ''}" title="${isFav ? '取消收藏' : '添加收藏'}">${isFav ? '★' : '☆'}</button>
-          ${p.type !== 'direct' ? `<button class="open-external" title="在新标签页打开"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ''}
           <button class="more" title="更多操作">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
           </button>
@@ -381,14 +380,6 @@ function renderSidebar() {
         e.stopPropagation();
         toggleFavorite(p.id);
       });
-      // 新标签页打开按钮
-      const openBtn = item.querySelector('.open-external');
-      if (openBtn) {
-        openBtn.addEventListener('click', e => {
-          e.stopPropagation();
-          window.open(p.url, '_blank');
-        });
-      }
       // 三点菜单：展开/收起，同一时间只保留一个打开的菜单
       // 用 fixed 定位避开 .page-list 的 overflow 裁剪，位置按按钮实际坐标计算
       const menu = item.querySelector('.item-menu');
@@ -437,7 +428,7 @@ function renderSidebar() {
   }
 }
 
-function selectPage(id) {
+function selectPage(id, skipPushState) {
   if (id === activeId && !mdEditing && !docEditing && !viewingPageDoc && currentView === 'page') return;
   if (!confirmDiscardIfEditing()) return;
   const page = pages.find(p => p.id === id);
@@ -446,6 +437,10 @@ function selectPage(id) {
   exitDocView();
   renderSidebar();
   showPage(page);
+  // 更新浏览器地址栏 URL（直链页面除外）
+  if (!skipPushState && page.type !== 'direct') {
+    history.pushState({ pageId: id }, '', '/page/' + id);
+  }
 }
 
 // 关闭所有已展开的页面项菜单（点击其他区域时由 document 监听触发）
@@ -586,6 +581,8 @@ function showWelcome() {
   renderSidebar();
   updateSidebarTrigger();
   saveViewState();
+  // 回到主面板时清除 URL 路径
+  history.pushState(null, '', '/');
 }
 
 function showSettings() {
@@ -1775,13 +1772,13 @@ async function init() {
     return;
   }
   renderSidebar();
-  const saved = restoreViewState();
-  if (saved && saved.view === 'settings' && isAdmin) {
-    showSettings();
-  } else if (saved && saved.view === 'page' && saved.activeId) {
-    const target = pages.find(p => p.id === saved.activeId);
+  // 优先从 URL 检测当前页面（/page/:id 格式）
+  const pathMatch = location.pathname.match(/^\/page\/([^/]+)/);
+  if (pathMatch) {
+    const urlPageId = decodeURIComponent(pathMatch[1]);
+    const target = pages.find(p => p.id === urlPageId);
     if (target && target.type !== 'direct') {
-      activeId = saved.activeId;
+      activeId = urlPageId;
       currentView = 'page';
       showPage(target);
       renderSidebar();
@@ -1789,7 +1786,22 @@ async function init() {
       showWelcome();
     }
   } else {
-    showWelcome(); // 无保存状态时默认欢迎页
+    const saved = restoreViewState();
+    if (saved && saved.view === 'settings' && isAdmin) {
+      showSettings();
+    } else if (saved && saved.view === 'page' && saved.activeId) {
+      const target = pages.find(p => p.id === saved.activeId);
+      if (target && target.type !== 'direct') {
+        activeId = saved.activeId;
+        currentView = 'page';
+        showPage(target);
+        renderSidebar();
+      } else {
+        showWelcome();
+      }
+    } else {
+      showWelcome(); // 无保存状态时默认欢迎页
+    }
   }
 
   // 加载版本号
@@ -1801,6 +1813,17 @@ async function init() {
 }
 
 init();
+
+// 浏览器前进/后退导航
+window.addEventListener('popstate', () => {
+  const match = location.pathname.match(/^\/page\/([^/]+)/);
+  if (match) {
+    const pageId = decodeURIComponent(match[1]);
+    selectPage(pageId, true);
+  } else {
+    showWelcome();
+  }
+});
 
 // ---------- 登出 ----------
 logoutBtn.addEventListener('click', async () => {

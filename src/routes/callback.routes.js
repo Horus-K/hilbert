@@ -15,8 +15,12 @@ router.get('/callback', async (req, res) => {
       return res.status(400).send('Authorization code missing');
     }
 
-    const accessToken = await authService.exchangeCodeForToken(code);
-    const user = await authService.fetchUserInfo(accessToken);
+    const tokenData = await authService.exchangeCodeForToken(code);
+    const user = await authService.fetchUserInfo(tokenData.access_token);
+    user.googleAccessToken = tokenData.access_token;
+    if (Number.isFinite(Number(tokenData.expires_in))) {
+      user.googleAccessTokenExpiresAt = Date.now() + Number(tokenData.expires_in) * 1000;
+    }
 
     // 登录权限校验
     const denyReason = authService.checkLoginPermission(user.email);

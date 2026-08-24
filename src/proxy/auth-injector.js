@@ -7,6 +7,12 @@ const sessionCache = new Map();
 // oauth 模式的令牌缓存：pageId -> { token, expiresAt }
 const tokenCache = new Map();
 
+// Node.js 只接受 Latin-1 请求头值；姓名和分组中的中文需要编码后转发。
+function toHeaderValue(value) {
+  const text = String(value);
+  return /[^\t\x20-\x7e\x80-\xff]/.test(text) ? encodeURIComponent(text) : text;
+}
+
 /**
  * 执行一次表单登录，返回会话 Cookie 字符串
  */
@@ -127,16 +133,32 @@ async function applyAuthHeaders(page, headers, user) {
   if (auth.mode === 'identity') {
     // 透传当前登录用户身份（如 Jenkins Reverse Proxy Auth Plugin 信任的请求头）
     if (user && user.email) {
-      headers[(auth.userHeader || 'X-Forwarded-User').toLowerCase()] = user.email;
-      headers[(auth.emailHeader || 'X-Forwarded-Mail').toLowerCase()] = user.email;
+      headers[(auth.userHeader || 'X-Forwarded-User').toLowerCase()] = toHeaderValue(user.email);
+      headers[(auth.emailHeader || 'X-Forwarded-Mail').toLowerCase()] = toHeaderValue(user.email);
     }
     if (user && user.displayName) {
-      headers[(auth.displayNameHeader || 'X-Forwarded-DisplayName').toLowerCase()] = user.displayName;
+      headers[(auth.displayNameHeader || 'X-Forwarded-DisplayName').toLowerCase()] = toHeaderValue(user.displayName);
+    }
+    if (user && (user.sub || user.id)) {
+      headers[(auth.idHeader || 'X-Forwarded-User-Id').toLowerCase()] = toHeaderValue(user.sub || user.id);
+    }
+    if (user && user.picture) {
+      headers[(auth.pictureHeader || 'X-Forwarded-User-Picture').toLowerCase()] = toHeaderValue(user.picture);
     }
     if (user && user.groups) {
       headers[(auth.groupsHeader || 'X-Forwarded-Groups').toLowerCase()] = Array.isArray(user.groups)
-        ? user.groups.join(',')
-        : user.groups;
+        ? toHeaderValue(user.groups.join(','))
+        : toHeaderValue(user.groups);
+    }
+    if (auth.forwardGoogleAuth && user && user.googleAuth) {
+      headers[(auth.googleAuthHeader || 'X-Forwarded-Google-Auth').toLowerCase()] =
+        Buffer.from(JSON.stringify(user.googleAuth), 'utf8').toString('base64url');
+    }
+    const accessTokenExpired = user && user.googleAccessTokenExpiresAt &&
+      Number(user.googleAccessTokenExpiresAt) <= Date.now();
+    if (auth.forwardGoogleAccessToken && user && user.googleAccessToken && !accessTokenExpired) {
+      headers[(auth.googleAccessTokenHeader || 'X-Forwarded-Google-Access-Token').toLowerCase()] =
+        toHeaderValue(user.googleAccessToken);
     }
     return;
   }

@@ -1,7 +1,7 @@
 const http = require('http');
 const https = require('https');
 const jwt = require('jsonwebtoken');
-const { httpAgent, httpsAgent, httpsAgentNoVerify, applyDnsOverride } = require('./agents');
+const { getPageRequestAgent, applyDnsOverride } = require('./agents');
 const { applyAuthHeaders } = require('./auth-injector');
 const { resolveProxyTarget } = require('./proxy-handler');
 const { findPageByReferer, getProxyRoutes } = require('./route-manager');
@@ -78,10 +78,12 @@ function setupWebSocket(server) {
       const lib = base.protocol === 'https:' ? https : http;
       const wsUrl = new URL(target);
       const wsDnsOpts = applyDnsOverride(page, wsUrl, base, headers);
-      const wsOpts = { method: 'GET', headers, ...wsDnsOpts };
-      if (page.resolveIp && base.protocol === 'https:') {
-        wsOpts.agent = httpsAgentNoVerify;
-      }
+      const wsOpts = {
+        method: 'GET',
+        headers,
+        agent: getPageRequestAgent(wsUrl, page),
+        ...wsDnsOpts
+      };
       const proxyReq = lib.request(wsUrl, wsOpts);
       proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
         let raw = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;

@@ -1,7 +1,7 @@
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
-const { httpAgent, httpsAgent, httpsAgentNoVerify, applyDnsOverride } = require('./agents');
+const { getPageRequestAgent, applyDnsOverride } = require('./agents');
 const { applyAuthHeaders, clearSession } = require('./auth-injector');
 const { rewriteHtml, rewriteCss } = require('./rewriter');
 
@@ -89,11 +89,14 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
       await applyAuthHeaders(page, headers, req.user);
 
       await new Promise((resolve, reject) => {
-        const hasDnsOverride = !!(page && page.resolveIp);
-        const agent = base.protocol === 'https:' ? (hasDnsOverride ? httpsAgentNoVerify : httpsAgent) : httpAgent;
         const targetUrl = new URL(target);
         const dnsOpts = applyDnsOverride(page, targetUrl, base, headers);
-        const reqOpts = { method: req.method, headers, agent, ...dnsOpts };
+        const reqOpts = {
+          method: req.method,
+          headers,
+          agent: getPageRequestAgent(targetUrl, page),
+          ...dnsOpts
+        };
         const proxyReq = lib.request(targetUrl, reqOpts, proxyRes => {
           // login/oauth 模式会话过期检测
           const expired = auth && (auth.mode === 'login' || auth.mode === 'oauth') && !isRetry && (

@@ -100,6 +100,9 @@ cp .env.example .env
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `GOOGLE_API_PROXY` | 否 | Google API 出站代理地址，国内服务器需要配置（如 `http://127.0.0.1:10808`） |
+| `PAGE_PROXY` | 否 | 所有外部链接页面的统一出站代理，覆盖页面请求、自动认证和 WebSocket（如 `http://127.0.0.1:10808`） |
+
+`PAGE_PROXY` 支持 `http://` 和 `https://` 代理地址。留空时页面保持直连；该配置不会影响 Google OAuth，后者仍由 `GOOGLE_API_PROXY` 单独控制。
 
 #### 登录限制（可选）
 

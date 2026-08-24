@@ -1699,6 +1699,8 @@ function openModal(page = null) {
   $('authEmailHeader').value = hasAuth && page.auth.emailHeader !== 'X-Forwarded-Mail' ? (page.auth.emailHeader || '') : '';
   $('authDisplayNameHeader').value = hasAuth && page.auth.displayNameHeader !== 'X-Forwarded-DisplayName' ? (page.auth.displayNameHeader || '') : '';
   $('authGroupsHeader').value = hasAuth && page.auth.groupsHeader !== 'X-Forwarded-Groups' ? (page.auth.groupsHeader || '') : '';
+  $('authForwardGoogleAuth').checked = hasAuth && page.auth.forwardGoogleAuth === true;
+  $('authForwardGoogleAccessToken').checked = hasAuth && page.auth.forwardGoogleAccessToken === true;
   $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
   $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
   $('authClientSecret').value = hasAuth ? (page.auth.clientSecret || '') : '';
@@ -1761,6 +1763,8 @@ $('pageForm').addEventListener('submit', async e => {
         for (const [key, value] of Object.entries(identityHeaders)) {
           if (value) body.auth[key] = value;
         }
+        body.auth.forwardGoogleAuth = $('authForwardGoogleAuth').checked;
+        body.auth.forwardGoogleAccessToken = $('authForwardGoogleAccessToken').checked;
       } else if (mode === 'oauth') {
         body.auth = {
           mode,

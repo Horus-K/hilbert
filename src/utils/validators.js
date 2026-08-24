@@ -24,7 +24,11 @@ function normalizeAuth(auth) {
       userHeader: 'X-Forwarded-User',
       emailHeader: 'X-Forwarded-Mail',
       displayNameHeader: 'X-Forwarded-DisplayName',
-      groupsHeader: 'X-Forwarded-Groups'
+      groupsHeader: 'X-Forwarded-Groups',
+      idHeader: 'X-Forwarded-User-Id',
+      pictureHeader: 'X-Forwarded-User-Picture',
+      googleAuthHeader: 'X-Forwarded-Google-Auth',
+      googleAccessTokenHeader: 'X-Forwarded-Google-Access-Token'
     };
     const normalized = { mode };
     for (const [key, fallback] of Object.entries(defaults)) {
@@ -32,6 +36,8 @@ function normalizeAuth(auth) {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName)) return undefined;
       normalized[key] = headerName;
     }
+    normalized.forwardGoogleAuth = auth.forwardGoogleAuth === true;
+    normalized.forwardGoogleAccessToken = auth.forwardGoogleAccessToken === true;
     return normalized;
   }
   if (mode === 'header') {

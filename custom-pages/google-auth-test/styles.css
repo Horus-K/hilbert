@@ -1,0 +1,34 @@
+:root {
+  color: #18332d;
+  background: #edf5ef;
+  font-family: Georgia, "Noto Serif SC", "Songti SC", serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 48px 20px;
+  background:
+    radial-gradient(circle at top left, rgba(246, 201, 112, .38), transparent 35%),
+    radial-gradient(circle at 90% 80%, rgba(73, 154, 126, .24), transparent 32%),
+    #edf5ef;
+}
+
+main {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 44px;
+  border: 1px solid rgba(24, 51, 45, .14);
+  border-radius: 22px;
+  background: rgba(255, 253, 246, .91);
+  box-shadow: 0 24px 70px rgba(24, 51, 45, .13);
+}
+
+.eyebrow { margin: 0 0 10px; color: #b0542c; font: 700 12px/1.2 ui-monospace, monospace; letter-spacing: .14em; }
+h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); letter-spacing: -.04em; }
+.message { margin: 20px 0 28px; color: #48615a; line-height: 1.7; }
+pre { overflow: auto; padding: 20px; border-radius: 14px; background: #18332d; color: #e8f0e9; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+.button { display: inline-block; margin: 8px 8px 0 0; padding: 11px 17px; border: 1px solid #2e6254; border-radius: 999px; color: #2e6254; text-decoration: none; font-family: ui-sans-serif, sans-serif; font-weight: 700; }
+.button.primary { background: #2e6254; color: #fffdf6; }

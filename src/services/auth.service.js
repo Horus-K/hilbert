@@ -79,8 +79,7 @@ async function exchangeCodeForToken(code) {
     throw new Error('Failed to exchange authorization code');
   }
 
-  const tokenData = await tokenRes.json();
-  return tokenData.access_token;
+  return tokenRes.json();
 }
 
 /**
@@ -135,6 +134,12 @@ function signJwt(user) {
     groups: Array.isArray(user.groups) ? user.groups : (user.groups ? [user.groups] : []),
     picture: user.picture
   };
+  // Google userinfo 的原始资料仅写入签名 JWT，按页面配置决定是否继续透传给下游。
+  if (user && user.id) payload.googleAuth = user.googleAuth || user;
+  if (user && user.googleAccessToken) {
+    payload.googleAccessToken = user.googleAccessToken;
+    payload.googleAccessTokenExpiresAt = user.googleAccessTokenExpiresAt || null;
+  }
   return jwt.sign(payload, GOOGLE_CONFIG.jwt_secret, {
     expiresIn: GOOGLE_CONFIG.jwt_expire_hours + 'h'
   });
@@ -146,7 +151,7 @@ function isDebugModeEnabled() {
 
 function getDebugUser() {
   if (!isDebugModeEnabled()) return null;
-  return {
+  const user = {
     id: DEBUG_CONFIG.user.id || 'debug-user',
     email: DEBUG_CONFIG.user.email,
     name: DEBUG_CONFIG.user.name || DEBUG_CONFIG.user.displayName || DEBUG_CONFIG.user.email,
@@ -154,6 +159,13 @@ function getDebugUser() {
     groups: Array.isArray(DEBUG_CONFIG.user.groups) ? DEBUG_CONFIG.user.groups : [],
     picture: DEBUG_CONFIG.user.picture || null
   };
+  user.googleAuth = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    picture: user.picture
+  };
+  return user;
 }
 
 module.exports = {

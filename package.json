@@ -4,7 +4,8 @@
   "description": "可配置多页面嵌入的后台管理面板（ChatGPT 风格 UI）",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "google-auth-test": "node custom-pages/google-auth-test/server.js"
   },
   "dependencies": {
     "adm-zip": "^0.6.0",

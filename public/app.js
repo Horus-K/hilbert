@@ -488,7 +488,7 @@ function renderTabs() {
       if (e.target.closest('.tab-close')) return;
       if (tab.id !== activeTabId) {
         if (!confirmDiscardIfEditing()) return;
-        activateTab(tab.id);
+        activateTab(tab.id, 'push');
       }
     });
     el.querySelector('.tab-close').addEventListener('click', (e) => {
@@ -506,8 +506,7 @@ function openTab(page, skipPushState) {
   // 检查是否已有该页面的标签
   const existing = tabs.find(t => t.pageId === page.id);
   if (existing) {
-    activateTab(existing.id);
-    if (!skipPushState) history.pushState({ pageId: page.id }, '', '/page/' + page.id);
+    activateTab(existing.id, skipPushState ? null : 'push');
     return;
   }
   // 创建新标签
@@ -535,11 +534,18 @@ function openTab(page, skipPushState) {
     panel.innerHTML = '<div class="loading-mask"><div class="spinner"></div><p>页面加载中…</p></div>';
     tabPanels.appendChild(panel);
   }
-  activateTab(tabId);
-  if (!skipPushState) history.pushState({ pageId: page.id }, '', '/page/' + page.id);
+  activateTab(tabId, skipPushState ? null : 'push');
 }
 
-function activateTab(tabId) {
+function updatePageHistory(pageId, mode) {
+  if (!mode) return;
+  const state = { pageId };
+  const path = '/page/' + encodeURIComponent(pageId);
+  if (mode === 'replace') history.replaceState(state, '', path);
+  else history.pushState(state, '', path);
+}
+
+function activateTab(tabId, historyMode = null) {
   const tab = tabs.find(t => t.id === tabId);
   if (!tab) return;
   activeTabId = tabId;
@@ -584,9 +590,13 @@ function activateTab(tabId) {
             iframe.src = page.url;
           } else {
             const pageUrl = new URL(page.url);
-            const pagePath = pageUrl.pathname.replace(/\/+$/, '');
-                        iframe.src = (page.proxyMode === 'mount' ? (page.mountPath || '/hilbert-proxy/' + page.id) + '/' : (pagePath || '/'))
-              + (pageUrl.search || '');
+            const mountPath = page.mountPath || '/hilbert-proxy/' + page.id;
+            const upstreamPath = pageUrl.pathname || '/';
+            iframe.setAttribute('sandbox', [
+              'allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-modals',
+              'allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox'
+            ].join(' '));
+            iframe.src = page.proxyOrigin + mountPath + upstreamPath + (pageUrl.search || '');
           }
         }
       }
@@ -612,6 +622,7 @@ function activateTab(tabId) {
   renderSidebar();
   updateSidebarTrigger();
   saveViewState();
+  updatePageHistory(tab.pageId, historyMode);
 }
 
 function closeTab(tabId) {
@@ -637,7 +648,7 @@ function closeTab(tabId) {
     activeTabId = null;
     if (tabs.length > 0) {
       const newIdx = Math.min(idx, tabs.length - 1);
-      activateTab(tabs[newIdx].id);
+      activateTab(tabs[newIdx].id, 'replace');
     } else {
       // 无标签时复用完整的欢迎页切换，避免遗留已关闭页面的视图状态。
       showWelcome();
@@ -739,7 +750,8 @@ async function duplicatePage(page) {
   };
   if (page.type === 'link') {
     body.url = page.url;
-    if (page.proxyMode) body.proxyMode = page.proxyMode;
+    body.proxyMode = 'mount';
+    if (page.mountPath) body.mountPath = page.mountPath;
     if (page.auth) body.auth = page.auth;
   } else if (page.type === 'direct' || page.type === 'iframe') {
     body.url = page.url;
@@ -1612,8 +1624,8 @@ function setType(type) {
   $('urlField').classList.toggle('hidden', !needUrl);
   // 直链和直接嵌入只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
-  $('proxyModeField').classList.toggle('hidden', !isLink);
-  $('mountPathField').classList.toggle('hidden', !isLink || $('fieldProxyMode').value !== 'mount');
+  $('proxyModeField').classList.add('hidden');
+  $('mountPathField').classList.toggle('hidden', !isLink);
   $('authField').classList.toggle('hidden', !isLink);
   $('customFileField').classList.toggle('hidden', type !== 'custom');
   $('fieldUrl').required = needUrl;
@@ -1660,26 +1672,15 @@ function fillGroupSelect(selected) {
     .join('');
 }
 
-// 代理模式提示：URL 无路径时恒等映射会加载面板自身造成无限嵌套，需提醒改用挂载
 function updateProxyModeHint() {
   const hint = $('proxyModeHint');
-  let emptyPath = false;
-  try {
-    emptyPath = !new URL($('fieldUrl').value.trim()).pathname.replace(/\/+$/, '');
-  } catch { /* URL 尚未输完整时忽略 */ }
-  if (emptyPath && $('fieldProxyMode').value === 'identity') {
-    hint.textContent = '⚠️ 该 URL 没有路径，恒等映射会加载面板自身导致无限嵌套，建议改用挂载模式';
-    hint.classList.add('warn');
-  } else {
-    hint.textContent = '恒等映射 URL 更简洁；若站点 URL 没有路径（如 https://notes.example.com/），需选择挂载模式';
-    hint.classList.remove('warn');
-  }
+  hint.textContent = '所有外部页面均通过隔离 origin 下的独立挂载路径访问';
+  hint.classList.remove('warn');
 }
 $('fieldUrl').addEventListener('input', updateProxyModeHint);
 $('fieldProxyMode').addEventListener('change', () => {
   updateProxyModeHint();
-  // 挂载模式才显示自定义挂载路径输入框
-  $('mountPathField').classList.toggle('hidden', $('fieldProxyMode').value !== 'mount');
+  $('mountPathField').classList.remove('hidden');
 });
 
 function openModal(page = null) {
@@ -1688,7 +1689,7 @@ function openModal(page = null) {
   $('fieldName').value = page ? page.name : '';
   $('fieldUrl').value = page && page.type !== 'markdown' ? page.url : '';
   $('fieldResolveIp').value = page ? (page.resolveIp || '') : '';
-  $('fieldProxyMode').value = page && page.proxyMode === 'mount' ? 'mount' : 'identity';
+  $('fieldProxyMode').value = 'mount';
   $('fieldMountPath').value = page && page.mountPath ? page.mountPath.replace(/^\//, '') : '';
   updateProxyModeHint();
   $('fieldIcon').value = page ? page.icon : '';
@@ -1709,8 +1710,6 @@ function openModal(page = null) {
   $('authEmailHeader').value = hasAuth && page.auth.emailHeader !== 'X-Forwarded-Mail' ? (page.auth.emailHeader || '') : '';
   $('authDisplayNameHeader').value = hasAuth && page.auth.displayNameHeader !== 'X-Forwarded-DisplayName' ? (page.auth.displayNameHeader || '') : '';
   $('authGroupsHeader').value = hasAuth && page.auth.groupsHeader !== 'X-Forwarded-Groups' ? (page.auth.groupsHeader || '') : '';
-  $('authForwardGoogleAuth').checked = hasAuth && page.auth.forwardGoogleAuth === true;
-  $('authForwardGoogleAccessToken').checked = hasAuth && page.auth.forwardGoogleAccessToken === true;
   $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
   $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
   $('authClientSecret').value = hasAuth ? (page.auth.clientSecret || '') : '';
@@ -1748,8 +1747,7 @@ $('pageForm').addEventListener('submit', async e => {
   };
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();
-    body.proxyMode = $('fieldProxyMode').value;
-    // 自定义挂载路径：非挂载模式传空串，后端会清除该字段
+    body.proxyMode = 'mount';
     body.mountPath = $('fieldMountPath').value.trim();
     // 始终传递 resolveIp（空字符串时后端会删除该字段）
     body.resolveIp = $('fieldResolveIp').value.trim();
@@ -1773,8 +1771,6 @@ $('pageForm').addEventListener('submit', async e => {
         for (const [key, value] of Object.entries(identityHeaders)) {
           if (value) body.auth[key] = value;
         }
-        body.auth.forwardGoogleAuth = $('authForwardGoogleAuth').checked;
-        body.auth.forwardGoogleAccessToken = $('authForwardGoogleAccessToken').checked;
       } else if (mode === 'oauth') {
         body.auth = {
           mode,
@@ -1866,7 +1862,7 @@ $('confirmDelete').addEventListener('click', async () => {
     if (relatedTabs.some(t => t.id === activeTabId)) {
       activeTabId = null;
       if (tabs.length > 0) {
-        activateTab(tabs[0].id);
+        activateTab(tabs[0].id, 'replace');
       } else {
         showWelcome();
       }
@@ -2071,7 +2067,7 @@ async function refresh() {
     if (activeTabId && !tabs.find(t => t.id === activeTabId)) {
       activeTabId = null;
       if (tabs.length > 0) {
-        activateTab(tabs[tabs.length - 1].id);
+        activateTab(tabs[tabs.length - 1].id, 'replace');
       }
     }
     renderTabs();

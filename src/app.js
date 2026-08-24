@@ -16,8 +16,8 @@ function createApp() {
   // 注册全局中间件（安全头 + JWT 认证）
   registerMiddleware(app);
 
-  // 初始化代理（连接池、动态路由、自定义页面托管）
-  proxy.init(app);
+  // 初始化代理路由状态与自定义页面托管；外部内容由独立 proxy app 提供。
+  proxy.init();
 
   // 注册所有路由
   registerRoutes(app, proxy);

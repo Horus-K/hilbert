@@ -1,38 +1,74 @@
 const { handleProxyRequest } = require('./proxy-handler');
+const { userKey } = require('./cookie-jar');
 const { hasPermission } = require('../services/rbac.service');
+const pagesRepo = require('../repositories/pages.repository');
+
+const proxyRoutes = new Map();
+let routeEntries = [];
 
 function canReadPage(req, page) {
   return req.user && hasPermission(req.user.email, page.id, 'read');
 }
 
-// 存储已注册的代理路由
-const proxyRoutes = new Map(); // pathPrefix -> { page, mount }
-
 /**
- * 挂载模式的入口路径：优先自定义挂载路径（如 /jenkins），否则默认 /hilbert-proxy/<页面id>
+ * 所有代理页面均使用显式挂载命名空间；不再把上游路径注册到 Hilbert 主站。
  */
 function getMountPath(page) {
   return page.mountPath || '/hilbert-proxy/' + page.id;
 }
 
-// 最近经由代理转发的请求路径 -> 页面 id（来源归属链）
+function pathsOverlap(left, right) {
+  return left === right || left.startsWith(right + '/') || right.startsWith(left + '/');
+}
+
+function refreshProxyRoutes() {
+  const nextEntries = [];
+  for (const page of pagesRepo.read()) {
+    if (page.type !== 'link') continue;
+    const path = getMountPath(page);
+    const conflict = nextEntries.find(entry => pathsOverlap(entry.path, path));
+    if (conflict) {
+      console.error(`代理挂载路径冲突，已忽略页面 ${page.id}: ${path} 与 ${conflict.path}`);
+      continue;
+    }
+    nextEntries.push({ path, pageId: page.id });
+  }
+  nextEntries.sort((a, b) => b.path.length - a.path.length);
+  routeEntries = nextEntries;
+  proxyRoutes.clear();
+  for (const entry of routeEntries) {
+    const page = pagesRepo.read().find(candidate => candidate.id === entry.pageId);
+    if (page) proxyRoutes.set(entry.path, { page, mount: true });
+  }
+}
+
+function findRouteByPath(reqPath) {
+  for (const entry of routeEntries) {
+    if (reqPath === entry.path || reqPath.startsWith(entry.path + '/')) {
+      const page = pagesRepo.read().find(candidate => candidate.id === entry.pageId && candidate.type === 'link');
+      if (page && getMountPath(page) === entry.path) {
+        return { page, mountPrefix: entry.path };
+      }
+    }
+  }
+  return null;
+}
+
 const recentProxyPaths = new Map();
 const RECENT_PROXY_PATHS_LIMIT = 5000;
 
-/**
- * 记录代理路径归属
- */
-function recordProxyPath(page, reqPath) {
-  recentProxyPaths.set(reqPath, page.id);
+function recentPathKey(path, user) {
+  return `${userKey(user)}:${path}`;
+}
+
+function recordProxyPath(page, reqPath, user) {
+  recentProxyPaths.set(recentPathKey(reqPath, user), page.id);
   if (recentProxyPaths.size > RECENT_PROXY_PATHS_LIMIT) {
     recentProxyPaths.delete(recentProxyPaths.keys().next().value);
   }
 }
 
-/**
- * 按 Referer 识别来源页面
- */
-function findPageByReferer(referer) {
+function findPageByReferer(referer, user) {
   let refUrl;
   try {
     refUrl = new URL(referer);
@@ -40,164 +76,47 @@ function findPageByReferer(referer) {
     return null;
   }
 
-  // ① 已注册代理路由前缀最长匹配
-  let page = null;
-  let mountPrefix = null;
-  let bestLen = 0;
-  for (const [pathPrefix, entry] of proxyRoutes) {
-    if ((entry.page.proxyMode === 'mount') !== entry.mount) continue;
-    if ((refUrl.pathname === pathPrefix || refUrl.pathname.startsWith(pathPrefix + '/')) &&
-        pathPrefix.length > bestLen) {
-      page = entry.page;
-      bestLen = pathPrefix.length;
-      mountPrefix = entry.mount ? pathPrefix : null;
-    }
-  }
-  if (page) return { page, mountPrefix };
+  const direct = findRouteByPath(refUrl.pathname);
+  if (direct) return direct;
 
-  // ①.5 同域路径归属
-  const refOrigin = refUrl.origin;
-  let pathMatchPage = null;
-  let pathMatchLen = 0;
-  const pagesRepo = require('../repositories/pages.repository');
-  for (const p of pagesRepo.read()) {
-    if (p.type !== 'link' || p.proxyMode === 'mount') continue;
-    let target;
-    try {
-      target = new URL(p.url);
-    } catch {
-      continue;
-    }
-    if (target.origin !== refOrigin) continue;
-    const pagePath = target.pathname.replace(/\/+$/, '');
-    if (!pagePath) continue;
-    if ((refUrl.pathname === pagePath || refUrl.pathname.startsWith(pagePath + '/')) &&
-        pagePath.length > pathMatchLen) {
-      pathMatchPage = p;
-      pathMatchLen = pagePath.length;
-    }
-  }
-  if (pathMatchPage) return { page: pathMatchPage, mountPrefix: null };
+  const pageId = recentProxyPaths.get(recentPathKey(refUrl.pathname, user));
+  if (!pageId) return null;
+  const page = pagesRepo.read().find(candidate => candidate.id === pageId && candidate.type === 'link');
+  return page ? { page, mountPrefix: getMountPath(page) } : null;
+}
 
-  // ② 目标站 origin 匹配
-  let best = null;
-  for (const p of pagesRepo.read()) {
-    if (p.type !== 'link' || p.proxyMode === 'mount') continue;
-    let target;
-    try {
-      target = new URL(p.url);
-    } catch {
-      continue;
-    }
-    if (target.origin === refOrigin) {
-      if (!best || target.pathname.length > new URL(best.url).pathname.length) best = p;
-    }
-  }
-  if (best) return { page: best, mountPrefix: null };
-
-  // ③ 归属链
-  const servedBy = recentProxyPaths.get(refUrl.pathname);
-  if (servedBy) {
-    const p = pagesRepo.read().find(x => x.id === servedBy && x.type === 'link');
-    if (p) {
-      return {
-        page: p,
-        mountPrefix: p.proxyMode === 'mount' ? getMountPath(p) : null
-      };
-    }
-  }
+function resolveProxyRequest(req, user = req.user) {
+  const reqPath = req.url.split('?')[0];
+  const direct = findRouteByPath(reqPath);
+  if (direct) return direct;
+  if (req.headers.referer) return findPageByReferer(req.headers.referer, user);
   return null;
 }
 
 /**
- * 动态注册代理路由
+ * Express 中只注册一次稳定 dispatcher；页面变化只替换内存路由表。
  */
-function registerProxyRoutes(app) {
-  proxyRoutes.clear();
-
-  const pagesRepo = require('../repositories/pages.repository');
-  const pages = pagesRepo.read().filter(p => p.type === 'link');
-  const routesToRegister = [];
-
-  for (const page of pages) {
-    try {
-      const url = new URL(page.url);
-      const fullPath = url.pathname.replace(/\/+$/, '');
-
-      if (page.proxyMode === 'mount') {
-        const mountPath = getMountPath(page);
-        routesToRegister.push({ path: mountPath, page, mount: true, priority: mountPath.length });
-        continue;
-      }
-
-      if (!fullPath) continue;
-
-      const segments = fullPath.split('/').filter(Boolean);
-      const prefixes = [];
-      let currentPath = '';
-      for (const seg of segments) {
-        currentPath += '/' + seg;
-        prefixes.push(currentPath);
-      }
-
-      for (const prefix of prefixes) {
-        routesToRegister.push({ path: prefix, page, mount: false, priority: prefix.length });
-      }
-    } catch { /* 无效 URL 忽略 */ }
-  }
-
-  // 按优先级排序（路径越长优先级越高）
-  routesToRegister.sort((a, b) => b.priority - a.priority);
-
-  // 注册路由（去重）
-  const registeredPaths = new Set();
-  for (const { path, page, mount } of routesToRegister) {
-    if (registeredPaths.has(path)) continue;
-    registeredPaths.add(path);
-
-    proxyRoutes.set(path, { page, mount });
-
-    app.use(path, (req, res, next) => {
-      const pagesRepo = require('../repositories/pages.repository');
-      const currentPage = pagesRepo.read().find(p => p.id === page.id && p.type === 'link');
-      if (!currentPage || (currentPage.proxyMode === 'mount') !== mount) return next();
-      // 挂载路径已变更时陈旧中间件不再接管（Express 重注册无法移除旧路由）
-      if (mount && getMountPath(currentPage) !== path) return next();
-      if (!canReadPage(req, currentPage)) return res.status(403).send('没有查看该页面的权限');
-      handleProxyRequest(currentPage, req, res, mount ? null : path, mount ? path : undefined);
-    });
-  }
-}
-
-/**
- * 创建 Referer 兜底代理中间件
- */
-function createRefererFallback() {
+function createProxyDispatcher() {
   return (req, res, next) => {
-    const reqPath = req.url.split('?')[0];
-    if (reqPath.startsWith('/hilbert-api') || reqPath.startsWith('/hilbert-custom')) return next();
-    for (const pathPrefix of proxyRoutes.keys()) {
-      if (reqPath === pathPrefix || reqPath.startsWith(pathPrefix + '/')) return next();
-    }
-    const found = findPageByReferer(req.headers.referer);
+    const found = resolveProxyRequest(req);
     if (!found) return next();
     if (!canReadPage(req, found.page)) return res.status(403).send('没有查看该页面的权限');
-    handleProxyRequest(found.page, req, res, '', found.mountPrefix || undefined);
+    handleProxyRequest(found.page, req, res, null, found.mountPrefix);
   };
 }
 
-/**
- * 获取代理路由表（供 WebSocket 模块使用）
- */
 function getProxyRoutes() {
   return proxyRoutes;
 }
 
 module.exports = {
-  registerProxyRoutes,
-  createRefererFallback,
+  createProxyDispatcher,
   findPageByReferer,
-  recordProxyPath,
-  getProxyRoutes,
+  findRouteByPath,
   getMountPath,
+  getProxyRoutes,
+  pathsOverlap,
+  recordProxyPath,
+  refreshProxyRoutes,
+  resolveProxyRequest
 };

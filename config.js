@@ -1,12 +1,48 @@
 // 加载 .env 文件（如果存在），系统环境变量优先级更高
 require('dotenv').config();
 
+const appPort = parseInt(process.env.PORT || '3000', 10);
+const externalProxyPort = parseInt(process.env.EXTERNAL_PROXY_PORT || String(appPort + 1), 10);
+const externalProxyPublicPort = parseInt(
+  process.env.EXTERNAL_PROXY_PUBLIC_PORT || String(externalProxyPort),
+  10
+);
+
+function assertPort(name, value) {
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`${name} 必须是 1-65535 之间的端口`);
+  }
+}
+
+assertPort('PORT', appPort);
+assertPort('EXTERNAL_PROXY_PORT', externalProxyPort);
+assertPort('EXTERNAL_PROXY_PUBLIC_PORT', externalProxyPublicPort);
+if (externalProxyPort === appPort) throw new Error('EXTERNAL_PROXY_PORT 必须与 PORT 不同');
+
+let externalProxyPublicOrigin = '';
+if (process.env.EXTERNAL_PROXY_PUBLIC_ORIGIN) {
+  const url = new URL(process.env.EXTERNAL_PROXY_PUBLIC_ORIGIN);
+  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('EXTERNAL_PROXY_PUBLIC_ORIGIN 必须是无路径、查询参数和片段的 http/https origin');
+  }
+  externalProxyPublicOrigin = url.origin;
+} else if (externalProxyPublicPort === appPort) {
+  throw new Error('EXTERNAL_PROXY_PUBLIC_PORT 必须与 PORT 不同，以确保浏览器 origin 隔离');
+}
+
 // 配置项全部从环境变量读取，敏感信息不硬编码
 module.exports = {
   // 超级管理员邮箱列表（逗号分隔）：拥有所有页面的所有权限，且是唯一能访问 RBAC 权限配置的用户
   admin_emails: (process.env.ADMIN_EMAIL || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
   // 外部链接页面的统一出站代理；与 Google OAuth API 代理相互独立。
   page_proxy: process.env.PAGE_PROXY || '',
+  // 外部页面必须运行在与 Hilbert UI 不同的浏览器 origin 上，避免目标脚本获得主站权限。
+  // 默认使用同一主机的相邻端口；生产环境可由独立域名/端口反代到 listen_port。
+  external_proxy: {
+    listen_port: externalProxyPort,
+    public_port: externalProxyPublicPort,
+    public_origin: externalProxyPublicOrigin
+  },
   debug: {
     enabled: process.env.DEBUG_MODE === 'true',
     user: {

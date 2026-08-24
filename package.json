@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "google-auth-test": "node custom-pages/google-auth-test/server.js"
   },
   "dependencies": {

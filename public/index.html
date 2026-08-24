@@ -205,7 +205,7 @@
         </div>
         <div class="form-item">
           <label>页面名称 <span class="required">*</span></label>
-          <input type="text" id="fieldName" placeholder="例如：Grafana 监控面板" maxlength="40" required />
+          <input type="text" id="fieldName" placeholder="例如：监控面板" maxlength="40" required />
         </div>
         <div class="form-item" id="urlField">
           <label>嵌入链接 <span class="required">*</span></label>
@@ -219,15 +219,14 @@
         <div class="form-item hidden" id="proxyModeField">
           <label>代理模式</label>
           <select id="fieldProxyMode">
-            <option value="identity">恒等映射（默认，直接用目标 URL 路径作为代理入口）</option>
-            <option value="mount">挂载（根路径站点或恒等映射异常时选用，可自定义路径）</option>
+            <option value="mount">隔离挂载</option>
           </select>
-          <p class="form-hint" id="proxyModeHint">恒等映射 URL 更简洁；若站点 URL 没有路径（如 https://notes.example.com/），需选择挂载模式</p>
+          <p class="form-hint" id="proxyModeHint">所有外部页面均通过隔离 origin 下的独立挂载路径访问</p>
         </div>
         <div class="form-item hidden" id="mountPathField">
           <label>挂载路径</label>
-          <input type="text" id="fieldMountPath" placeholder="如 jenkins（留空则用默认 /hilbert-proxy/&lt;页面id&gt;）" />
-          <p class="form-hint">自定义代理入口路径，配置后通过 /jenkins 访问（如 Jenkins URL 配置直接填该路径）；留空使用默认路径</p>
+          <input type="text" id="fieldMountPath" placeholder="留空则使用 /hilbert-proxy/&lt;页面id&gt;" />
+          <p class="form-hint">通常留空即可；如需固定入口，可配置隔离代理 origin 内的自定义路径</p>
         </div>
         <div class="form-item hidden" id="authField">
           <label class="checkbox-label">
@@ -237,10 +236,10 @@
           <div class="auth-box hidden" id="authBox">
             <select id="authMode">
               <option value="basic">Basic Auth（Authorization 头）</option>
-              <option value="login">表单登录（用户名密码登录，如 Grafana）</option>
-              <option value="oauth">OAuth 2.0 客户端凭证（如 Polaris）</option>
+              <option value="login">表单登录（用户名密码换取会话 Cookie）</option>
+              <option value="oauth">OAuth 2.0 客户端凭证</option>
               <option value="header">自定义请求头（如 Bearer 令牌）</option>
-              <option value="identity">当前用户身份透传（如 Jenkins）</option>
+              <option value="identity">当前用户身份请求头</option>
             </select>
             <div class="auth-inputs" id="authUserPass">
               <input type="text" id="authUser" placeholder="用户名" autocomplete="off" />
@@ -249,8 +248,8 @@
             <input type="text" class="auth-login-path hidden" id="authLoginPath" placeholder="登录接口路径（默认 /login）" />
             <div class="auth-login-opts hidden" id="authLoginOpts">
               <select id="authLoginFormat" title="登录请求体格式">
-                <option value="json">登录请求格式：JSON（如 Grafana）</option>
-                <option value="form">登录请求格式：表单（如 XXL-JOB）</option>
+                <option value="json">登录请求格式：JSON</option>
+                <option value="form">登录请求格式：表单</option>
               </select>
               <div class="auth-inputs">
                 <input type="text" id="authUserField" placeholder="用户名字段名（默认 user）" autocomplete="off" />
@@ -266,14 +265,6 @@
               <input type="text" id="authEmailHeader" placeholder="邮箱请求头名（默认 X-Forwarded-Mail）" autocomplete="off" />
               <input type="text" id="authDisplayNameHeader" placeholder="显示名请求头名（默认 X-Forwarded-DisplayName）" autocomplete="off" />
               <input type="text" id="authGroupsHeader" placeholder="用户组请求头名（默认 X-Forwarded-Groups）" autocomplete="off" />
-              <label class="checkbox-label">
-                <input type="checkbox" id="authForwardGoogleAuth" />
-                透传完整 Google 用户资料（不包含 OAuth Token）
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="authForwardGoogleAccessToken" />
-                透传 Google access_token（高风险，不包含 refresh_token）
-              </label>
               <p class="form-hint">将当前登录用户的邮箱、显示名和用户组透传给目标站，要求目标站只能通过本服务访问（防伪造）</p>
             </div>
             <div class="hidden" id="authOAuthFields">

@@ -2,174 +2,199 @@ const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
 const { getPageRequestAgent, applyDnsOverride } = require('./agents');
-const { applyAuthHeaders, clearSession } = require('./auth-injector');
-const { rewriteHtml, rewriteCss } = require('./rewriter');
+const { applyAuthHeaders, clearSession, resolveLoginUrl } = require('./auth-injector');
+const { storeResponseCookies } = require('./cookie-jar');
+const { buildUpstreamHeaders, stripFrameAncestors, stripHopByHopHeaders } = require('./header-utils');
+const { rewriteHtml, rewriteCss, rewriteUrl } = require('./rewriter');
 
-/**
- * 计算代理请求的实际目标地址
- */
-function resolveProxyTarget(page, originalUrl, stripPrefix = '') {
-  const base = new URL(page.url);
-  const basePath = base.pathname.replace(/\/+$/, '');
-  const fileLike = /\/[^/]*\.[^/]*$/.test(basePath);
-
-  let rest = stripPrefix && originalUrl.startsWith(stripPrefix)
-    ? originalUrl.slice(stripPrefix.length)
-    : originalUrl;
-  if (!rest.startsWith('/')) rest = '/' + rest;
-  const qIdx = rest.indexOf('?');
-  const restPath = qIdx === -1 ? rest : rest.slice(0, qIdx);
-  const restQuery = qIdx === -1 ? '' : rest.slice(qIdx + 1);
-  const query = [...new Set([
-    ...base.search.replace(/^\?/, '').split('&'),
-    ...restQuery.split('&')
-  ].filter(Boolean))].join('&');
-
-  let targetPath;
-  if (stripPrefix) {
-    targetPath = restPath === '/' ? (basePath || '/') : restPath;
-  } else if (restPath === '/') {
-    targetPath = basePath || '/';
-  } else {
-    targetPath = restPath;
-  }
-
+function splitPathAndQuery(originalUrl) {
+  const qIdx = originalUrl.indexOf('?');
   return {
-    base, basePath, fileLike, restPath, query,
-    target: base.origin + targetPath + (query ? '?' + query : '')
+    pathname: qIdx === -1 ? originalUrl : originalUrl.slice(0, qIdx),
+    search: qIdx === -1 ? '' : originalUrl.slice(qIdx)
   };
 }
 
 /**
- * 代理转发主体
+ * 公开 URL 在挂载前缀之后完整镜像上游 pathname，使普通相对 URL 无需猜测即可保持语义。
+ */
+function resolveProxyTarget(page, originalUrl, stripPrefix = '') {
+  const base = new URL(page.url);
+  const incoming = splitPathAndQuery(originalUrl);
+  let restPath = incoming.pathname || '/';
+  const prefixMatched = stripPrefix &&
+    (restPath === stripPrefix || restPath.startsWith(stripPrefix + '/'));
+  if (prefixMatched) restPath = restPath.slice(stripPrefix.length) || '/';
+  if (!restPath.startsWith('/')) restPath = '/' + restPath;
+
+  const atMountRoot = Boolean(stripPrefix && prefixMatched && restPath === '/');
+  const targetUrl = new URL(base.origin);
+  targetUrl.pathname = atMountRoot ? base.pathname : restPath;
+  targetUrl.search = atMountRoot && !incoming.search ? base.search : incoming.search;
+
+  return {
+    base,
+    basePath: base.pathname,
+    restPath,
+    target: targetUrl.href,
+    targetUrl
+  };
+}
+
+function responseIndicatesExpiredAuth(page, proxyRes, targetUrl) {
+  const auth = page.auth;
+  if (!auth || !['login', 'oauth'].includes(auth.mode)) return false;
+  const expiredStatuses = auth.expiredStatuses || [401];
+  if (expiredStatuses.includes(proxyRes.statusCode)) return true;
+  if (auth.mode !== 'login' || !proxyRes.headers.location) return false;
+  try {
+    const location = new URL(proxyRes.headers.location, targetUrl);
+    const loginUrl = resolveLoginUrl(page, new URL(page.url));
+    return location.origin === loginUrl.origin && location.pathname === loginUrl.pathname;
+  } catch {
+    return false;
+  }
+}
+
+function rewriteRefreshHeader(value, context) {
+  return String(value).replace(/(\burl\s*=\s*)([^;]+)$/i, (full, prefix, url) => {
+    return prefix + rewriteUrl(url.trim().replace(/^['"]|['"]$/g, ''), context);
+  });
+}
+
+/**
+ * 代理转发主体。matchedPath 参数仅为旧调用兼容保留；所有页面统一使用 mountPrefix。
  */
 function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
-  // 记录路径归属，供 Referer 兜底的归属链规则使用
-  const { recordProxyPath } = require('./route-manager');
-  recordProxyPath(page, req.originalUrl.split('?')[0]);
-
-  const resolved = resolveProxyTarget(page, req.originalUrl, mountPrefix || '');
-  const { base, target } = resolved;
   const rewritePrefix = mountPrefix || '';
-
-  // 页面 URL 指向深层路径时，对入口根请求先跳转到页面 URL 路径
-  const reqPath = req.originalUrl.split('?')[0];
-  const atEntryRoot = !mountPrefix && (matchedPath
-    ? (reqPath === matchedPath || reqPath === matchedPath + '/')
-    : resolved.restPath === '/');
-  if (atEntryRoot && resolved.basePath && !resolved.fileLike &&
-    (!matchedPath || matchedPath.length < resolved.basePath.length)) {
-    return res.redirect(302, resolved.basePath
-      + (resolved.query ? '?' + resolved.query : ''));
-  }
-
+  const resolved = resolveProxyTarget(page, req.originalUrl || req.url, rewritePrefix);
+  const { base, targetUrl } = resolved;
   const auth = page.auth;
-  const lib = base.protocol === 'https:' ? https : http;
-  const appUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host + rewritePrefix + '/';
+  const lib = targetUrl.protocol === 'https:' ? https : http;
 
-  // 缓存请求体
+  const { recordProxyPath } = require('./route-manager');
+  recordProxyPath(page, (req.originalUrl || req.url).split('?')[0], req.user);
+
   const chunks = [];
-  req.on('data', c => chunks.push(c));
+  req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => {
-    const bodyBuf = Buffer.concat(chunks);
+    const bodyBuffer = Buffer.concat(chunks);
     forward(false).catch(err => {
       if (!res.headersSent) res.status(502).send('代理请求失败: ' + err.message);
       else res.end();
     });
 
     async function forward(isRetry) {
-      const headers = { ...req.headers };
-      delete headers.host;
-      headers.origin = base.origin;
-      headers.referer = base.origin + '/';
-      delete headers['transfer-encoding'];
-      headers['accept-encoding'] = 'gzip, deflate, br';
-      headers['content-length'] = bodyBuf.length;
-
-      await applyAuthHeaders(page, headers, req.user);
+      const logicalTargetUrl = new URL(targetUrl.href);
+      const headers = buildUpstreamHeaders(req, base, rewritePrefix);
+      if (bodyBuffer.length || req.headers['content-length'] !== undefined) {
+        headers['content-length'] = String(bodyBuffer.length);
+      } else {
+        delete headers['content-length'];
+      }
+      await applyAuthHeaders(page, headers, req.user, logicalTargetUrl);
 
       await new Promise((resolve, reject) => {
-        const targetUrl = new URL(target);
-        const dnsOpts = applyDnsOverride(page, targetUrl, base, headers);
-        const reqOpts = {
+        const networkUrl = new URL(logicalTargetUrl.href);
+        const dnsOptions = applyDnsOverride(page, networkUrl, base, headers);
+        const requestOptions = {
           method: req.method,
           headers,
-          agent: getPageRequestAgent(targetUrl, page),
-          ...dnsOpts
+          agent: getPageRequestAgent(networkUrl, page),
+          ...dnsOptions
         };
-        const proxyReq = lib.request(targetUrl, reqOpts, proxyRes => {
-          // login/oauth 模式会话过期检测
-          const expired = auth && (auth.mode === 'login' || auth.mode === 'oauth') && !isRetry && (
-            proxyRes.statusCode === 401 ||
-            ([301, 302, 303, 307, 308].includes(proxyRes.statusCode) &&
-              /login/i.test(proxyRes.headers.location || ''))
-          );
-          if (expired) {
+
+        const proxyReq = lib.request(networkUrl, requestOptions, proxyRes => {
+          if (!isRetry && responseIndicatesExpiredAuth(page, proxyRes, logicalTargetUrl)) {
             proxyRes.resume();
-            clearSession(page.id);
+            clearSession(page.id, req.user);
             resolve(forward(true));
             return;
           }
-          const resHeaders = { ...proxyRes.headers };
-          // 剥离 iframe 嵌入限制
-          delete resHeaders['x-frame-options'];
-          delete resHeaders['content-security-policy'];
-          delete resHeaders['content-security-policy-report-only'];
-          // 重写指向目标站的跳转
-          if (resHeaders.location) {
-            try {
-              const loc = new URL(resHeaders.location, base.origin);
-              if (loc.origin === base.origin) {
-                resHeaders.location = rewritePrefix + loc.pathname + loc.search;
-              }
-            } catch { /* 非法 Location 保持原样 */ }
+
+          storeResponseCookies(page, req.user, logicalTargetUrl, proxyRes.headers['set-cookie']);
+          const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
+          delete responseHeaders['set-cookie'];
+          delete responseHeaders['x-frame-options'];
+          for (const name of ['content-security-policy', 'content-security-policy-report-only']) {
+            if (!responseHeaders[name]) continue;
+            const rewrittenCsp = stripFrameAncestors(responseHeaders[name]);
+            if (rewrittenCsp) responseHeaders[name] = rewrittenCsp;
+            else delete responseHeaders[name];
           }
 
-          const contentType = String(resHeaders['content-type'] || '');
-          const isHtml = /text\/html/.test(contentType);
-          const rewrite = isHtml ? rewriteHtml : (rewritePrefix && /text\/css/.test(contentType)) ? rewriteCss : null;
+          const rewriteContext = {
+            mountPrefix: rewritePrefix,
+            upstreamOrigin: base.origin,
+            upstreamUrl: logicalTargetUrl.href
+          };
+          if (responseHeaders.location) {
+            try {
+              responseHeaders.location = rewriteUrl(
+                new URL(responseHeaders.location, logicalTargetUrl).href,
+                rewriteContext
+              );
+            } catch {
+              // 非法 Location 保持原样，由浏览器按原始响应处理。
+            }
+          }
+          if (responseHeaders.refresh) {
+            responseHeaders.refresh = rewriteRefreshHeader(responseHeaders.refresh, rewriteContext);
+          }
+
+          const contentType = String(responseHeaders['content-type'] || '').toLowerCase();
+          const charsetMatch = contentType.match(/charset\s*=\s*([^;\s]+)/i);
+          const charset = charsetMatch ? charsetMatch[1].replace(/["']/g, '').toLowerCase() : 'utf-8';
+          const textEncodingSupported = ['utf-8', 'utf8', 'us-ascii', 'ascii'].includes(charset);
+          const isHtml = /text\/html|application\/xhtml\+xml/.test(contentType);
+          const isCss = /text\/css/.test(contentType);
+          const rewrite = textEncodingSupported && isHtml
+            ? rewriteHtml
+            : textEncodingSupported && isCss
+              ? rewriteCss
+              : null;
+
           if (!rewrite) {
-            // 无需重写：压缩响应原样透传
-            res.writeHead(proxyRes.statusCode, resHeaders);
+            res.writeHead(proxyRes.statusCode, responseHeaders);
             proxyRes.pipe(res);
             proxyRes.on('end', resolve);
             proxyRes.on('error', reject);
             return;
           }
-          // HTML/CSS 需文本重写：先解压再重写
-          const encoding = String(resHeaders['content-encoding'] || '').toLowerCase();
-          if (encoding && !/gzip|deflate|br/.test(encoding)) {
+
+          const encoding = String(responseHeaders['content-encoding'] || '').toLowerCase();
+          if (encoding && !/^(?:gzip|deflate|br)$/.test(encoding)) {
             proxyRes.resume();
-            return reject(new Error(`目标站返回了无法解压的编码: ${encoding}`));
+            reject(new Error(`目标站返回了无法解压的编码: ${encoding}`));
+            return;
           }
-          let src = proxyRes;
-          if (encoding.includes('br')) {
-            src = proxyRes.pipe(zlib.createBrotliDecompress());
-          } else if (encoding.includes('gzip') || encoding.includes('deflate')) {
-            src = proxyRes.pipe(zlib.createUnzip());
-          }
-          const bufs = [];
-          src.on('data', c => bufs.push(c));
-          src.on('end', () => {
-            const rewritten = isHtml
-              ? rewriteHtml(Buffer.concat(bufs).toString('utf8'), rewritePrefix, appUrl)
-              : rewriteCss(Buffer.concat(bufs).toString('utf8'), rewritePrefix);
-            delete resHeaders['content-length'];
-            delete resHeaders['content-encoding'];
-            delete resHeaders['transfer-encoding'];
-            resHeaders['content-length'] = Buffer.byteLength(rewritten);
-            res.writeHead(proxyRes.statusCode, resHeaders);
+          let source = proxyRes;
+          if (encoding === 'br') source = proxyRes.pipe(zlib.createBrotliDecompress());
+          else if (encoding === 'gzip' || encoding === 'deflate') source = proxyRes.pipe(zlib.createUnzip());
+
+          const responseBuffers = [];
+          source.on('data', chunk => responseBuffers.push(chunk));
+          source.on('end', () => {
+            const rewritten = rewrite(Buffer.concat(responseBuffers).toString('utf8'), rewriteContext);
+            delete responseHeaders['content-encoding'];
+            responseHeaders['content-length'] = String(Buffer.byteLength(rewritten));
+            res.writeHead(proxyRes.statusCode, responseHeaders);
             res.end(rewritten);
             resolve();
           });
-          src.on('error', reject);
+          source.on('error', reject);
           proxyRes.on('error', reject);
         });
         proxyReq.on('error', reject);
-        proxyReq.end(bodyBuf.length ? bodyBuf : undefined);
+        proxyReq.end(bodyBuffer.length ? bodyBuffer : undefined);
       });
     }
   });
 }
 
-module.exports = { handleProxyRequest, resolveProxyTarget };
+module.exports = {
+  handleProxyRequest,
+  resolveProxyTarget,
+  responseIndicatesExpiredAuth,
+  rewriteRefreshHeader
+};

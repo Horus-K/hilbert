@@ -2,9 +2,11 @@ const http = require('http');
 const https = require('https');
 const jwt = require('jsonwebtoken');
 const { getPageRequestAgent, applyDnsOverride } = require('./agents');
-const { applyAuthHeaders } = require('./auth-injector');
+const { applyAuthHeaders, clearSession } = require('./auth-injector');
+const { storeResponseCookies } = require('./cookie-jar');
+const { buildUpstreamHeaders } = require('./header-utils');
 const { resolveProxyTarget } = require('./proxy-handler');
-const { findPageByReferer, getProxyRoutes } = require('./route-manager');
+const { resolveProxyRequest } = require('./route-manager');
 const { GOOGLE_CONFIG } = require('../services/auth.service');
 const { hasPermission } = require('../services/rbac.service');
 
@@ -31,52 +33,22 @@ function extractUser(req) {
  */
 function setupWebSocket(server) {
   server.on('upgrade', async (req, socket, head) => {
-    const reqPath = req.url.split('?')[0];
-    let page = null;
-    let matchedPath = null;
-
-    // 查找匹配的代理路由（最长前缀匹配）
-    let mountPrefix;
-    const proxyRoutes = getProxyRoutes();
-    for (const [pathPrefix, entry] of proxyRoutes) {
-      if ((entry.page.proxyMode === 'mount') !== entry.mount) continue;
-      if (reqPath === pathPrefix || reqPath.startsWith(pathPrefix + '/')) {
-        if (!matchedPath || pathPrefix.length > matchedPath.length) {
-          page = entry.page;
-          matchedPath = pathPrefix;
-          mountPrefix = entry.mount ? pathPrefix : undefined;
-        }
-      }
-    }
-
-    // 未命中时通过 Referer 识别来源页面转发
-    if (!page && req.headers.referer) {
-      const found = findPageByReferer(req.headers.referer);
-      if (found) {
-        page = found.page;
-        mountPrefix = found.mountPrefix || undefined;
-        matchedPath = '';
-      }
-    }
-
-    if (!page || page.type !== 'link') return rejectUpgrade(socket, 404, 'Not Found');
-
     const user = extractUser(req);
     if (!user) return rejectUpgrade(socket, 401, 'Unauthorized');
+    const found = resolveProxyRequest(req, user);
+    if (!found || found.page.type !== 'link') return rejectUpgrade(socket, 404, 'Not Found');
+    const { page, mountPrefix } = found;
     if (!hasPermission(user.email, page.id, 'read')) {
       return rejectUpgrade(socket, 403, 'Forbidden');
     }
 
     try {
-      const { base, target } = resolveProxyTarget(page, req.url, mountPrefix || '');
-      const headers = { ...req.headers };
-      delete headers.host;
-      headers.origin = base.origin;
-      headers.referer = base.origin + '/';
-      await applyAuthHeaders(page, headers, user);
+      const { base, targetUrl } = resolveProxyTarget(page, req.url, mountPrefix);
+      const headers = buildUpstreamHeaders(req, base, mountPrefix, true);
+      await applyAuthHeaders(page, headers, user, targetUrl);
 
-      const lib = base.protocol === 'https:' ? https : http;
-      const wsUrl = new URL(target);
+      const lib = targetUrl.protocol === 'https:' ? https : http;
+      const wsUrl = new URL(targetUrl.href);
       const wsDnsOpts = applyDnsOverride(page, wsUrl, base, headers);
       const wsOpts = {
         method: 'GET',
@@ -86,8 +58,10 @@ function setupWebSocket(server) {
       };
       const proxyReq = lib.request(wsUrl, wsOpts);
       proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+        storeResponseCookies(page, user, targetUrl, proxyRes.headers['set-cookie']);
         let raw = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
         for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+          if (proxyRes.rawHeaders[i].toLowerCase() === 'set-cookie') continue;
           raw += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
         }
         raw += '\r\n';
@@ -96,6 +70,11 @@ function setupWebSocket(server) {
         if (head.length) proxySocket.write(head);
         proxySocket.pipe(socket);
         socket.pipe(proxySocket);
+      });
+      proxyReq.on('response', proxyRes => {
+        if (proxyRes.statusCode === 401) clearSession(page.id, user);
+        proxyRes.resume();
+        rejectUpgrade(socket, proxyRes.statusCode || 502, proxyRes.statusMessage || 'Bad Gateway');
       });
       proxyReq.on('error', () => socket.destroy());
       proxyReq.end();

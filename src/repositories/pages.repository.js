@@ -29,6 +29,7 @@ function read() {
     const pages = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     cache = pages.map(p => {
       const page = { type: 'link', ...p };
+      if (page.type === 'link') page.proxyMode = 'mount';
       if (page.auth) {
         const normalized = normalizeAuth(page.auth);
         if (normalized !== undefined) page.auth = normalized;

@@ -70,7 +70,7 @@ function renderPage(identity) {
   const hasIdentity = Boolean(identity.email || identity.id);
   const message = hasIdentity
     ? '以下身份信息由 Hilbert 完成 Google 登录后，通过代理请求头传入。'
-    : '未收到 Hilbert 的身份请求头。请通过 Hilbert 的 /web/ 恒等映射打开此页面。';
+    : '未收到 Hilbert 的身份请求头。请通过 Hilbert 的隔离代理入口打开此页面。';
   return '<!doctype html>\n' +
     '<html lang="zh-CN"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +

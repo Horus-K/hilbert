@@ -12,20 +12,20 @@
   - 超级管理员拥有全部权限并可管理 RBAC 配置
   - 权限感知渲染：侧边栏、操作按钮根据当前用户权限动态显示/隐藏
 - **三种页面类型**
-  - `link`：iframe 嵌入外部系统（Grafana、xxl-job、内部工具等）
+  - `link`：通过隔离反向代理 origin 嵌入外部系统
   - `markdown`：内置 Markdown 文档，右侧原地编辑，正文以独立 `.md` 文件存储
   - `custom`：自定义前端页面，上传 HTML/CSS/JS 等静态资源，后端独立静态目录托管（`/hilbert-custom/<页面id>/`）
 - **分组管理**：页面按分组归类，支持新建/删除分组
 - **反向代理自动认证**（核心能力，解决 iframe 无法携带认证的问题）
   - `basic`：自动注入 `Authorization: Basic` 头（适用于 Nginx basic auth 站点）
-  - `login`：服务端自动完成表单登录换取会话 Cookie（适用于 Grafana 等），会话过期自动重登重试
+  - `login`：服务端完成 JSON/表单登录并按状态码策略维护会话 Cookie
   - `header`：注入任意自定义请求头（如 Bearer 令牌）
-- **深度代理适配**（以 Grafana 为例已验证）
-  - 剥离 `X-Frame-Options` / CSP 使目标站可被 iframe 嵌入
-  - Origin/Referer 改写绕过 CSRF 校验、WebSocket 双向透传（Grafana live）
-  - 两种代理模式（编辑页面可选）：
-    - **恒等映射**（默认）：代理路径直接使用目标页面 URL 路径（如 `/xxl-job-admin/`），绝对路径无需重写
-    - **挂载** `/hilbert-proxy/<页面id>`：适用于 URL 无路径的根路径站点（与面板根路径冲突）或恒等映射异常的站点，自动做 HTML/CSS 绝对路径重写 + `appSubUrl` 注入；支持自定义挂载路径（如 `/jenkins`），配置后以该路径作为代理入口
+- **通用隔离代理**
+  - 外部内容与 Hilbert UI/API 分别监听不同端口，浏览器侧不同源
+  - 每个页面使用独立 `/hilbert-proxy/<页面id>` 命名空间，不注册上游路径到主站
+  - 标准 HTML/CSS/Location URL 重写，保留相对路径语义；不识别应用私有字段
+  - Origin/Referer 按真实上游 URL 映射，WebSocket 双向透传
+  - 目标 Cookie 按「页面 + Hilbert 用户」保存在服务端，不向目标站泄露 Hilbert Cookie
 
 ## 技术栈
 
@@ -56,7 +56,47 @@ cp .env.example .env
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `PORT` | 否 | 服务监听端口，默认 `3000` |
+| `EXTERNAL_PROXY_PORT` | 否 | 隔离代理的内部监听端口，默认 `PORT + 1` |
+| `EXTERNAL_PROXY_PUBLIC_PORT` | 否 | 浏览器访问隔离代理的公开端口，默认等于 `EXTERNAL_PROXY_PORT` |
+| `EXTERNAL_PROXY_PUBLIC_ORIGIN` | 否 | 隔离代理的完整公开 origin；设置后优先于公开端口推导 |
 | `ADMIN_EMAIL` | ✅ | 超级管理员邮箱（多人用逗号分隔），拥有所有权限且可访问 RBAC 配置 |
+
+外部代理 origin 必须与 Hilbert 主站不同。当前 Cookie 认证要求两者保持同一 hostname、使用不同端口，因为 Cookie 可跨端口但默认不会跨 hostname。例如主站为 `https://hilbert.example.com`，代理可配置为 `https://hilbert.example.com:3443`，再由网关把 `3443` 转发到容器的 `3001`。
+
+### 暂缓方案：逐页面通配子域名路由
+
+> 此节记录后续架构方案，**当前版本尚未实现，所列变量也不是当前可用配置**。
+
+当前版本把全部外部页面放在一个代理 origin 下，通过路径命名空间区分页面：
+
+```text
+https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
+```
+
+这种方式可以隔离 Hilbert 主站和外部内容，但无法确定性处理外部脚本在运行时发起的根路径请求。例如脚本请求 `/api`、`/cdn-cgi/rum` 或 `/ws` 时，请求 URL 不再包含 `<pageId>`；HTTP `Referer` 又是可选信息，不能作为可靠的路由键。任意 JavaScript 字符串替换或针对固定路径返回结果都会形成站点特例，因此不作为最终方案。
+
+计划升级为每个页面一个独立代理 Host，由 Host 而不是 Referer 确定上游页面：
+
+```text
+https://<pageId>.proxy.example.com/上游路径
+```
+
+计划中的部署和实现约束：
+
+- DNS 将 `*.proxy.example.com` 解析到外部代理入口，TLS 使用对应的通配证书。
+- 代理根据经过严格校验的 Host 提取页面 ID，并对 HTTP 和 WebSocket 使用同一套路由及 RBAC 校验。
+- 公开路径完整镜像上游路径，因此 `/api`、`/cdn-cgi/rum`、`/ws` 等根路径仍能确定性归属页面。
+- 每个页面拥有独立浏览器 origin，避免一个外部页面脚本读取另一个代理页面的内容。
+- 认证采用短时一次性票据换取页面 Host-only 代理会话；不通过 `Domain=.example.com` 向所有子域名共享 Hilbert JWT。
+- 计划以类似 `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE={pageId}.proxy.example.com` 的模板配置生成公开 Host；具体变量在实现时确定。
+- `PAGE_PROXY` 仍只表示服务端访问上游时使用的出站代理，不参与浏览器路由。
+
+本地测试时，系统 `hosts` 文件不支持通配符，需要为测试页面逐条添加记录，例如：
+
+```text
+127.0.0.1 fb08901f.proxy.hilbert.test
+127.0.0.1 another-page.proxy.hilbert.test
+```
 
 #### Google OAuth2
 
@@ -128,6 +168,7 @@ cp .env.example .env
 docker build -t hilbert-demo .
 docker run -d --name hilbert-demo \
   -p 3000:3000 \
+  -p 3001:3001 \
   -v hilbert-demo-data:/app/data \
   hilbert-demo
 ```
@@ -146,6 +187,8 @@ metadata:
   name: hilbert-config
 data:
   PORT: "3000"
+  EXTERNAL_PROXY_PORT: "3001"
+  EXTERNAL_PROXY_PUBLIC_ORIGIN: "https://your-domain.com:3443"
   ADMIN_EMAIL: "admin@example.com,boss@example.com"
   GOOGLE_CLIENT_ID: "your-client-id.apps.googleusercontent.com"
   GOOGLE_REDIRECT_URI: "https://your-domain.com/callback?type=google"
@@ -176,6 +219,7 @@ spec:
           image: <registry>/hilbert-demo:1.2.0
           ports:
             - containerPort: 3000
+            - containerPort: 3001
           envFrom:
             - configMapRef:
                 name: hilbert-config
@@ -231,8 +275,7 @@ spec:
 | GET | `/hilbert-api/rbac/assignments` | 邮箱-角色分配列表（仅管理员） |
 | POST | `/hilbert-api/rbac/assignments` | 新建分配（仅管理员） |
 | DELETE | `/hilbert-api/rbac/assignments/:email/:roleId` | 删除分配（仅管理员） |
-| ANY | `/<页面URL路径>/**` | 反向代理（恒等映射，自动认证） |
-| ANY | `/hilbert-proxy/<页面id>/**` | 挂载模式页面的代理（前缀剥离 + HTML/CSS 重写，可自定义为 `/jenkins` 等路径） |
+| ANY | `<隔离代理origin>/hilbert-proxy/<页面id>/**` | 外部页面反向代理（自动认证、标准 URL 重写） |
 | GET | `/hilbert-custom/<页面id>/**` | 自定义页面静态资源服务 |
 
 ## 版本

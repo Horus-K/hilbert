@@ -45,8 +45,6 @@ function registerRoutes(app, proxy) {
   // 7. 自定义页面静态托管
   app.use('/hilbert-custom', proxy.customPagesDispatcher);
 
-  // 8. Referer 兜底代理（最后注册）
-  app.use(proxy.createRefererFallback());
 }
 
 module.exports = { registerRoutes };

@@ -1,6 +1,6 @@
 const http = require('http');
 const https = require('https');
-const { applyDnsOverride, httpsAgentNoVerify } = require('./agents');
+const { applyDnsOverride, getPageRequestAgent } = require('./agents');
 
 // login 模式的会话缓存：pageId -> 会话 Cookie 字符串
 const sessionCache = new Map();
@@ -39,9 +39,7 @@ function performLogin(page, base) {
     const loginUrl = new URL(base.origin + auth.loginPath);
     const loginDnsOpts = applyDnsOverride(page, loginUrl, base, loginOpts.headers);
     Object.assign(loginOpts, loginDnsOpts);
-    if (page.resolveIp && base.protocol === 'https:') {
-      loginOpts.agent = httpsAgentNoVerify;
-    }
+    loginOpts.agent = getPageRequestAgent(loginUrl, page);
     const loginReq = lib.request(loginUrl, loginOpts, loginRes => {
       const setCookies = loginRes.headers['set-cookie'] || [];
       const chunks = [];
@@ -87,10 +85,8 @@ function fetchOAuthToken(page) {
       }
     };
 
-    // 令牌端点可能在不同域名，不应用 DNS 覆盖，但 HTTPS 时支持 resolveIp 的 TLS 处理
-    if (page.resolveIp && tokenUrl.protocol === 'https:') {
-      reqOpts.agent = httpsAgentNoVerify;
-    }
+    // 令牌端点可能在不同域名，因此不应用页面的 DNS 覆盖，但仍使用页面出站代理。
+    reqOpts.agent = getPageRequestAgent(tokenUrl, page);
 
     const req = lib.request(tokenUrl, reqOpts, res => {
       const chunks = [];

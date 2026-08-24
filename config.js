@@ -5,6 +5,8 @@ require('dotenv').config();
 module.exports = {
   // 超级管理员邮箱列表（逗号分隔）：拥有所有页面的所有权限，且是唯一能访问 RBAC 权限配置的用户
   admin_emails: (process.env.ADMIN_EMAIL || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
+  // 外部链接页面的统一出站代理；与 Google OAuth API 代理相互独立。
+  page_proxy: process.env.PAGE_PROXY || '',
   debug: {
     enabled: process.env.DEBUG_MODE === 'true',
     user: {

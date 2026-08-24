@@ -69,6 +69,15 @@ const tabPanels = $('tabPanels');
 const tabBar = $('tabBar');
 const tabList = $('tabList');
 
+function renderMarkdownSafely(content) {
+  const html = marked.parse(content || '');
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['form', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['style']
+  });
+}
+
 const modalOverlay = $('modalOverlay');
 const confirmOverlay = $('confirmOverlay');
 const formError = $('formError');
@@ -515,7 +524,7 @@ function openTab(page, skipPushState) {
   };
   // Markdown 页面预渲染内容
   if (page.type === 'markdown') {
-    tab.mdContent = marked.parse(page.content || '');
+    tab.mdContent = renderMarkdownSafely(page.content);
   }
   tabs.push(tab);
   // 为 iframe/custom 标签创建独立面板（保留在 DOM 中以保持状态）
@@ -592,7 +601,7 @@ function activateTab(tabId) {
     if (tab.mdContent !== null) {
       mdBody.innerHTML = tab.mdContent;
     } else if (page) {
-      mdBody.innerHTML = marked.parse(page.content || '');
+      mdBody.innerHTML = renderMarkdownSafely(page.content);
       tab.mdContent = mdBody.innerHTML;
     }
     mdView.scrollTop = tab.scrollTop || 0;
@@ -688,7 +697,7 @@ function restoreTabs() {
         scrollTop: 0
       };
       if (tab.viewType === 'markdown') {
-        tab.mdContent = marked.parse(page.content || '');
+        tab.mdContent = renderMarkdownSafely(page.content);
       }
       tabs.push(tab);
       if (tab.viewType === 'iframe' || tab.viewType === 'custom') {
@@ -755,7 +764,7 @@ function showPage(page) {
 }
 
 function renderMarkdown(page) {
-  mdBody.innerHTML = marked.parse(page.content || '');
+  mdBody.innerHTML = renderMarkdownSafely(page.content);
   mdView.scrollTop = 0;
 }
 
@@ -1330,7 +1339,8 @@ function openMarkdownEditor(content) {
       cdn: '/vendor/vditor',
       lang: 'zh_CN',
       cache: { enable: false },
-      toolbarConfig: { pin: true },
+      // 编辑器本身固定在文档栏下方，无需再次把内部工具栏吸附到页面顶部。
+      toolbarConfig: { pin: false },
       preview: {
         actions: [],
         theme: { current: 'light', path: '/vendor/vditor/dist/css/content-theme/' },
@@ -1418,7 +1428,7 @@ async function openPageDoc(page) {
     const doc = await api('/' + page.id + '/doc');
     docContent = doc.content || '';
     if (docContent) {
-      mdBody.innerHTML = marked.parse(docContent);
+      mdBody.innerHTML = renderMarkdownSafely(docContent);
     } else {
       mdBody.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">暂无文档，点击右上角「编辑」开始编写</p>';
     }
@@ -1472,7 +1482,7 @@ async function saveDocEdit() {
     docContent = result.content || '';
     exitDocEdit();
     if (docContent) {
-      mdBody.innerHTML = marked.parse(docContent);
+      mdBody.innerHTML = renderMarkdownSafely(docContent);
     } else {
       mdBody.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">暂无文档，点击右上角「编辑」开始编写</p>';
     }

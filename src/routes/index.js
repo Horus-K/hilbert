@@ -27,6 +27,8 @@ function registerRoutes(app, proxy) {
   app.use(express.static(path.join(__dirname, '../../public')));
   // Markdown 编辑器资源随应用本地托管，避免运行时依赖外部 CDN。
   app.use('/vendor/vditor', express.static(path.join(__dirname, '../../node_modules/vditor')));
+  // Markdown 渲染结果必须先经过 DOMPurify，再写入页面。
+  app.use('/vendor/dompurify', express.static(path.join(__dirname, '../../node_modules/dompurify/dist')));
 
   // 5. 受保护的 API 路由（认证中间件已在 app 层全局注册）
   app.use('/hilbert-api/version', versionRouter);

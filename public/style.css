@@ -1256,6 +1256,19 @@ body.sidebar-pinned .sidebar-trigger {
 /* 编辑模式下工具栏切换按钮 */
 .md-view.editing { overflow: hidden; }
 
+.md-view.editing > .md-toolbar {
+  position: relative;
+  top: auto;
+  z-index: 1;
+}
+
+.md-view.editing > .md-editor {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto !important;
+  z-index: 2;
+}
+
 /* ---------- 自定义页面 ---------- */
 .custom-view {
   display: flex;
@@ -2360,16 +2373,25 @@ body {
 }
 
 .md-editor.vditor {
-  height: 100% !important;
+  height: auto !important;
   border: 0;
   border-radius: 0;
   background: #fff;
 }
 
 .md-editor .vditor-toolbar {
+  position: relative;
+  top: auto;
+  z-index: 3;
+  flex-shrink: 0;
   padding: 7px clamp(14px, 3vw, 28px);
   background: #fafafa;
   border-bottom: 1px solid #e8e8e9;
+}
+
+.md-editor .vditor-toolbar--pin {
+  position: relative;
+  top: auto;
 }
 
 .md-editor .vditor-toolbar__item button,

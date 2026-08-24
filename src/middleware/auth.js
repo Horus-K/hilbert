@@ -1,4 +1,3 @@
-const path = require('path');
 const jwt = require('jsonwebtoken');
 const {
   GOOGLE_CONFIG,
@@ -6,6 +5,15 @@ const {
   getDebugUser,
   signJwt
 } = require('../services/auth.service');
+
+const PUBLIC_PATHS = new Set([
+  '/auth/google',
+  '/auth/debug',
+  '/auth/config',
+  '/callback',
+  '/login.html',
+  '/hilbert-api/health'
+]);
 
 function setAuthCookie(req, res, token) {
   const isSecure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
@@ -22,19 +30,8 @@ function setAuthCookie(req, res, token) {
  * 全局认证中间件：校验 Cookie 中的 JWT
  */
 function auth(req, res, next) {
-  // 白名单：静态资源
-  const ext = path.extname(req.path);
-  if (ext && /^\.(css|js|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|eot|otf|mp3|mp4|webm|ogg|wav|pdf|xml|json|map)$/.test(ext)) {
-    return next();
-  }
-
-  // 白名单：认证相关路由及登录页
-  if (req.path === '/auth/google' || req.path === '/auth/debug' || req.path === '/auth/config' || req.path === '/callback' || req.path === '/login.html') {
-    return next();
-  }
-
-  // 白名单：健康检查
-  if (req.path === '/hilbert-api/health') {
+  // 仅放行明确的公开入口，不能按扩展名放行任意业务资源。
+  if (PUBLIC_PATHS.has(req.path)) {
     return next();
   }
 

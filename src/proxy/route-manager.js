@@ -1,4 +1,9 @@
 const { handleProxyRequest } = require('./proxy-handler');
+const { hasPermission } = require('../services/rbac.service');
+
+function canReadPage(req, page) {
+  return req.user && hasPermission(req.user.email, page.id, 'read');
+}
 
 // 存储已注册的代理路由
 const proxyRoutes = new Map(); // pathPrefix -> { page, mount }
@@ -158,6 +163,7 @@ function registerProxyRoutes(app) {
       if (!currentPage || (currentPage.proxyMode === 'mount') !== mount) return next();
       // 挂载路径已变更时陈旧中间件不再接管（Express 重注册无法移除旧路由）
       if (mount && getMountPath(currentPage) !== path) return next();
+      if (!canReadPage(req, currentPage)) return res.status(403).send('没有查看该页面的权限');
       handleProxyRequest(currentPage, req, res, mount ? null : path, mount ? path : undefined);
     });
   }
@@ -175,6 +181,7 @@ function createRefererFallback() {
     }
     const found = findPageByReferer(req.headers.referer);
     if (!found) return next();
+    if (!canReadPage(req, found.page)) return res.status(403).send('没有查看该页面的权限');
     handleProxyRequest(found.page, req, res, '', found.mountPrefix || undefined);
   };
 }

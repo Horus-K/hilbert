@@ -6,6 +6,12 @@ const { applyAuthHeaders } = require('./auth-injector');
 const { resolveProxyTarget } = require('./proxy-handler');
 const { findPageByReferer, getProxyRoutes } = require('./route-manager');
 const { GOOGLE_CONFIG } = require('../services/auth.service');
+const { hasPermission } = require('../services/rbac.service');
+
+function rejectUpgrade(socket, statusCode, statusText) {
+  socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`);
+  socket.destroy();
+}
 
 /**
  * upgrade 事件不经过 Express 中间件，从 Cookie 解析当前登录用户（失败视为匿名）
@@ -53,10 +59,12 @@ function setupWebSocket(server) {
       }
     }
 
-    if (!page || page.type !== 'link') {
-      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-      socket.destroy();
-      return;
+    if (!page || page.type !== 'link') return rejectUpgrade(socket, 404, 'Not Found');
+
+    const user = extractUser(req);
+    if (!user) return rejectUpgrade(socket, 401, 'Unauthorized');
+    if (!hasPermission(user.email, page.id, 'read')) {
+      return rejectUpgrade(socket, 403, 'Forbidden');
     }
 
     try {
@@ -65,7 +73,7 @@ function setupWebSocket(server) {
       delete headers.host;
       headers.origin = base.origin;
       headers.referer = base.origin + '/';
-      await applyAuthHeaders(page, headers, extractUser(req));
+      await applyAuthHeaders(page, headers, user);
 
       const lib = base.protocol === 'https:' ? https : http;
       const wsUrl = new URL(target);

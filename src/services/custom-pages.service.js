@@ -45,6 +45,10 @@ function customPagesDispatcher(req, res, next) {
   if (!match) return next();
   const handler = customRoutesMap.get(match[1]);
   if (!handler) return next();
+  const { hasPermission } = require('./rbac.service');
+  if (!req.user || !hasPermission(req.user.email, match[1], 'read')) {
+    return res.status(403).send('没有查看该页面的权限');
+  }
   req.url = match[2] || '/';
   return handler(req, res, next);
 }

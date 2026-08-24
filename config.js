@@ -24,7 +24,7 @@ module.exports = {
     client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
     oauth2_scope: process.env.GOOGLE_OAUTH2_SCOPE || '',
     oauth2_access_type: process.env.GOOGLE_OAUTH2_ACCESS_TYPE || 'offline',
-    oauth2_include_granted_scopes: process.env.GOOGLE_OAUTH2_INCLUDE_GRANTED_SCOPS !== 'false',
+    oauth2_include_granted_scopes: process.env.GOOGLE_OAUTH2_INCLUDE_GRANTED_SCOPES !== 'false',
     oauth2_response_type: process.env.GOOGLE_OAUTH2_RESPONSE_TYPE || 'code',
     oauth2_redirect_uri: process.env.GOOGLE_REDIRECT_URI,
     oauth2_url: process.env.GOOGLE_OAUTH2_URL || 'https://accounts.google.com/o/oauth2/v2/auth',

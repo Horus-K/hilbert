@@ -49,19 +49,28 @@ router.put('/:id/pin', (req, res) => {
 });
 
 // 上传文件（支持多文件 + zip 包）
-router.post('/:id/upload', (req, res) => {
+router.post('/:id/upload', (req, res, next) => {
   if (!hasPermission(req.user.email, req.params.id, 'update')) {
     throw new AppError('没有修改该页面的权限', 403);
   }
   customPagesService.upload.array('files', 50)(req, res, (err) => {
-    if (err) throw new AppError(err.message, 400);
-    const result = customPagesService.handleUpload(req.params.id, req.files);
-    res.json(result);
+    if (err) {
+      return next(err.code === 'LIMIT_FILE_SIZE' ? err : new AppError(err.message, 400));
+    }
+    try {
+      const result = customPagesService.handleUpload(req.params.id, req.files);
+      return res.json(result);
+    } catch (uploadError) {
+      return next(uploadError);
+    }
   });
 });
 
 // 列出文件
 router.get('/:id/files', (req, res) => {
+  if (!hasPermission(req.user.email, req.params.id, 'read')) {
+    throw new AppError('没有查看该页面的权限', 403);
+  }
   const files = customPagesService.listFiles(req.params.id);
   res.json(files);
 });

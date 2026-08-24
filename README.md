@@ -5,6 +5,7 @@
 ## 功能特性
 
 - **Google SSO 单点登录**：基于 Google OAuth2 的登录流程，JWT 会话管理，支持邮箱白名单（按域名或具体邮箱限制登录）
+- **Debug 登录模式**：通过环境变量开启后可跳过 Google OAuth，直接以预设调试用户登录，便于本地开发与联调
 - **RBAC 权限管理**：
   - 基于角色的访问控制，支持自定义角色并分配页面级权限（查看/新增/修改/删除）
   - 支持将角色分配给指定邮箱，支持通配符邮箱模式（如 `*@domain.com`）
@@ -79,6 +80,20 @@ cp .env.example .env
 | --- | --- | --- |
 | `JWT_SECRET` | ✅ | JWT 签名密钥，建议用 `openssl rand -base64 32` 生成 |
 | `JWT_EXPIRE_HOURS` | 否 | 会话过期时间（小时），默认 `720`（30 天） |
+
+#### Debug 登录（本地开发可选）
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `DEBUG_MODE` | 否 | 设为 `true` 后开启 debug 登录模式，自动跳过 Google OAuth |
+| `DEBUG_USER_EMAIL` | debug 模式下必填 | 调试用户邮箱 |
+| `DEBUG_USER_NAME` | 否 | 调试用户名，默认 `Debug User` |
+| `DEBUG_USER_DISPLAY_NAME` | 否 | 调试用户显示名，默认回退到 `DEBUG_USER_NAME` |
+| `DEBUG_USER_ID` | 否 | 调试用户 ID，默认 `debug-user` |
+| `DEBUG_USER_GROUPS` | 否 | 调试用户组，逗号分隔 |
+| `DEBUG_USER_PICTURE` | 否 | 调试用户头像 URL |
+
+> ⚠️ `DEBUG_MODE=true` 仅建议用于本地开发或测试环境，生产环境请保持关闭。
 
 #### 网络代理（可选）
 

@@ -4,6 +4,7 @@ const { ProxyAgent, fetch: proxyFetch } = require('undici');
 const config = require('../config');
 
 const GOOGLE_CONFIG = config.google;
+const DEBUG_CONFIG = config.debug || { enabled: false, user: {} };
 
 // Google API 出站代理 dispatcher（国内服务器换取 token / 获取用户信息时需走代理）
 const googleApiDispatcher = GOOGLE_CONFIG.api_proxy
@@ -139,6 +140,22 @@ function signJwt(user) {
   });
 }
 
+function isDebugModeEnabled() {
+  return !!(DEBUG_CONFIG.enabled && DEBUG_CONFIG.user && DEBUG_CONFIG.user.email);
+}
+
+function getDebugUser() {
+  if (!isDebugModeEnabled()) return null;
+  return {
+    id: DEBUG_CONFIG.user.id || 'debug-user',
+    email: DEBUG_CONFIG.user.email,
+    name: DEBUG_CONFIG.user.name || DEBUG_CONFIG.user.displayName || DEBUG_CONFIG.user.email,
+    displayName: DEBUG_CONFIG.user.displayName || DEBUG_CONFIG.user.name || DEBUG_CONFIG.user.email,
+    groups: Array.isArray(DEBUG_CONFIG.user.groups) ? DEBUG_CONFIG.user.groups : [],
+    picture: DEBUG_CONFIG.user.picture || null
+  };
+}
+
 module.exports = {
   generateStateToken,
   verifyStateToken,
@@ -147,5 +164,8 @@ module.exports = {
   fetchUserInfo,
   checkLoginPermission,
   signJwt,
+  isDebugModeEnabled,
+  getDebugUser,
   GOOGLE_CONFIG,
+  DEBUG_CONFIG,
 };

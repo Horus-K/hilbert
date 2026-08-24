@@ -50,6 +50,7 @@
     .google-btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 12px;
       padding: 12px 28px;
       background: #fff;
@@ -76,6 +77,46 @@
 
     .google-btn svg {
       flex-shrink: 0;
+    }
+
+    .google-btn.debug {
+      width: 100%;
+      background: linear-gradient(135deg, #3ddc97, #11998e);
+      color: #041b17;
+      font-weight: 700;
+    }
+
+    .google-btn.debug:hover {
+      background: linear-gradient(135deg, #52e2a5, #14b3a6);
+    }
+
+    .debug-panel {
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(61, 220, 151, 0.12);
+      border: 1px solid rgba(61, 220, 151, 0.28);
+      text-align: left;
+    }
+
+    .debug-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+      background: rgba(61, 220, 151, 0.18);
+      color: #8bf0c1;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .debug-text {
+      font-size: 13px;
+      line-height: 1.7;
+      color: rgba(255, 255, 255, 0.82);
     }
 
     .divider {
@@ -106,9 +147,14 @@
   <div class="login-card">
     <div class="logo">🔐</div>
     <h1 class="title">Hilbert</h1>
-    <p class="subtitle">请使用 Google 账号登录以继续</p>
+    <p class="subtitle" id="subtitle">请使用 Google 账号登录以继续</p>
 
-    <a href="/auth/google" class="google-btn">
+    <div class="debug-panel" id="debugPanel" style="display:none;">
+      <div class="debug-badge">Debug Mode</div>
+      <div class="debug-text" id="debugUserInfo"></div>
+    </div>
+
+    <a href="/auth/google" class="google-btn" id="loginButton">
       <svg width="20" height="20" viewBox="0 0 48 48">
         <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
         <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
@@ -118,8 +164,46 @@
       使用 Google 账号登录
     </a>
 
-    <div class="divider">SECURED BY GOOGLE SSO</div>
-    <p class="info">登录即表示你同意使用 Google 账号进行身份验证<br>仅限授权用户访问</p>
+    <div class="divider" id="divider">SECURED BY GOOGLE SSO</div>
+    <p class="info" id="info">登录即表示你同意使用 Google 账号进行身份验证<br>仅限授权用户访问</p>
   </div>
+  <script>
+    async function initLoginPage() {
+      try {
+        const res = await fetch('/auth/config', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.debugMode || !data.debugUser) return;
+
+        const loginButton = document.getElementById('loginButton');
+        const subtitle = document.getElementById('subtitle');
+        const divider = document.getElementById('divider');
+        const info = document.getElementById('info');
+        const debugPanel = document.getElementById('debugPanel');
+        const debugUserInfo = document.getElementById('debugUserInfo');
+        const groups = Array.isArray(data.debugUser.groups) && data.debugUser.groups.length
+          ? data.debugUser.groups.join(', ')
+          : '无';
+
+        subtitle.textContent = 'Debug 模式已开启，将跳过 Google OAuth 直接登录';
+        loginButton.href = '/auth/debug';
+        loginButton.classList.add('debug');
+        loginButton.innerHTML = '以 Debug 用户身份直接登录';
+        divider.textContent = 'DEBUG AUTH BYPASS';
+        info.innerHTML = '当前环境已启用调试登录，仅建议本地开发使用<br>关闭 DEBUG_MODE 后恢复 Google SSO';
+        debugUserInfo.innerHTML =
+          '用户：' + (data.debugUser.displayName || data.debugUser.name || '-') + '<br>' +
+          '邮箱：' + (data.debugUser.email || '-') + '<br>' +
+          '分组：' + groups;
+        debugPanel.style.display = 'block';
+
+        window.location.replace('/auth/debug');
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    initLoginPage();
+  </script>
 </body>
 </html>

@@ -5,6 +5,20 @@ require('dotenv').config();
 module.exports = {
   // 超级管理员邮箱列表（逗号分隔）：拥有所有页面的所有权限，且是唯一能访问 RBAC 权限配置的用户
   admin_emails: (process.env.ADMIN_EMAIL || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
+  debug: {
+    enabled: process.env.DEBUG_MODE === 'true',
+    user: {
+      id: process.env.DEBUG_USER_ID || '',
+      email: process.env.DEBUG_USER_EMAIL || '',
+      name: process.env.DEBUG_USER_NAME || 'Debug User',
+      displayName: process.env.DEBUG_USER_DISPLAY_NAME || process.env.DEBUG_USER_NAME || 'Debug User',
+      groups: (process.env.DEBUG_USER_GROUPS || '')
+        .split(',')
+        .map(group => group.trim())
+        .filter(Boolean),
+      picture: process.env.DEBUG_USER_PICTURE || ''
+    }
+  },
   google: {
     client_id: process.env.GOOGLE_CLIENT_ID || '',
     client_secret: process.env.GOOGLE_CLIENT_SECRET || '',

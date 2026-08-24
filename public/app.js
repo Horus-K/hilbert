@@ -542,6 +542,7 @@ function activateTab(tabId) {
   iframeWrap.classList.add('hidden');
   mdView.classList.add('hidden');
   customView.classList.add('hidden');
+  tabPanels.classList.remove('hidden');
   tabPanels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   // 更新标签数据（标题/图标可能因页面编辑而变化）
   const page = pages.find(p => p.id === tab.pageId);
@@ -628,17 +629,8 @@ function closeTab(tabId) {
       const newIdx = Math.min(idx, tabs.length - 1);
       activateTab(tabs[newIdx].id);
     } else {
-      // 无标签，显示欢迎页
-      activeId = null;
-      currentView = 'welcome';
-      iframeWrap.classList.add('hidden');
-      mdView.classList.add('hidden');
-      customView.classList.add('hidden');
-      settingsView.classList.add('hidden');
-      welcomeView.classList.remove('hidden');
-      renderSidebar();
-      updateSidebarTrigger();
-      saveViewState();
+      // 无标签时复用完整的欢迎页切换，避免遗留已关闭页面的视图状态。
+      showWelcome();
       history.pushState(null, '', '/');
     }
   } else {

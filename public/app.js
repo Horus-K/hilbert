@@ -6,6 +6,7 @@ let editingId = null; // null 表示新建模式
 let deletingId = null;
 let currentType = 'link'; // 弹窗中当前选择的页面类型
 let mdEditing = false; // 是否处于 Markdown 右侧编辑模式
+let markdownEditor = null; // Vditor 实例，Markdown 页面和页面文档共用
 let currentView = 'welcome'; // welcome | page | settings
 let customFiles = [];
 let isAdmin = false;          // 当前用户是否超级管理员
@@ -1319,16 +1320,48 @@ $('rbacAssignModal').addEventListener('click', e => { if (e.target === $('rbacAs
 $('rbacAssignSaveBtn').addEventListener('click', addAssignment);
 
 // ---------- Markdown 右侧原地编辑 ----------
+function openMarkdownEditor(content) {
+  mdEditor.classList.remove('hidden');
+  if (!markdownEditor) {
+    markdownEditor = new Vditor(mdEditor, {
+      height: '100%',
+      mode: 'sv',
+      value: content || '',
+      cdn: '/vendor/vditor',
+      lang: 'zh_CN',
+      cache: { enable: false },
+      toolbarConfig: { pin: true },
+      preview: {
+        actions: [],
+        theme: { current: 'light', path: '/vendor/vditor/dist/css/content-theme/' },
+        hljs: { style: 'github-dark' }
+      },
+      toolbar: [
+        'emoji', 'headings', 'bold', 'italic', 'strike', '|',
+        'line', 'quote', 'list', 'ordered-list', 'check', 'outdent', 'indent', '|',
+        'code', 'inline-code', 'link', 'table', '|',
+        'undo', 'redo', '|', 'edit-mode', 'outline', 'fullscreen'
+      ],
+      after: () => markdownEditor.focus()
+    });
+    return;
+  }
+  markdownEditor.setValue(content || '', true);
+  markdownEditor.focus();
+}
+
+function getMarkdownEditorValue() {
+  return markdownEditor ? markdownEditor.getValue() : '';
+}
+
 function enterMdEdit() {
   const page = pages.find(p => p.id === activeId);
   if (!page || page.type !== 'markdown') return;
   mdEditing = true;
-  mdEditor.value = page.content || '';
   mdBody.classList.add('hidden');
-  mdEditor.classList.remove('hidden');
   mdView.classList.add('editing');
   mdView.scrollTop = 0;
-  mdEditor.focus();
+  openMarkdownEditor(page.content || '');
   // 切换工具栏按钮
   mdEditBtn.classList.add('hidden');
   mdSaveBtn.classList.remove('hidden');
@@ -1352,7 +1385,7 @@ function exitMdEdit() {
 
 function isMdDirty() {
   const page = pages.find(p => p.id === activeId);
-  return mdEditing && page && mdEditor.value !== (page.content || '');
+  return mdEditing && page && getMarkdownEditorValue() !== (page.content || '');
 }
 
 // ---------- 页面专属文档 ----------
@@ -1403,12 +1436,10 @@ async function openPageDoc(page) {
 function enterDocEdit() {
   if (!docPageId) return;
   docEditing = true;
-  mdEditor.value = docContent || '';
   mdBody.classList.add('hidden');
-  mdEditor.classList.remove('hidden');
   mdView.classList.add('editing');
   mdView.scrollTop = 0;
-  mdEditor.focus();
+  openMarkdownEditor(docContent || '');
   mdEditBtn.classList.add('hidden');
   mdSaveBtn.classList.remove('hidden');
   mdCancelBtn.classList.remove('hidden');
@@ -1427,12 +1458,12 @@ function exitDocEdit() {
 }
 
 function isDocDirty() {
-  return docEditing && mdEditor.value !== (docContent || '');
+  return docEditing && getMarkdownEditorValue() !== (docContent || '');
 }
 
 async function saveDocEdit() {
   if (!docPageId) return;
-  const content = mdEditor.value;
+  const content = getMarkdownEditorValue();
   try {
     const result = await api('/' + docPageId + '/doc', {
       method: 'PUT',
@@ -1469,7 +1500,7 @@ function confirmDiscardIfEditing() {
   for (const tab of tabs) {
     if (tab.viewType === 'markdown' && tab.id === activeTabId && mdEditing) {
       const page = pages.find(p => p.id === tab.pageId);
-      if (page && mdEditor.value !== (page.content || '')) {
+      if (page && getMarkdownEditorValue() !== (page.content || '')) {
         return confirm('文档内容尚未保存，确定要离开吗？');
       }
     }
@@ -1483,7 +1514,7 @@ function confirmDiscardIfEditing() {
 async function saveMdEdit() {
   const page = pages.find(p => p.id === activeId);
   if (!page) return;
-  const content = mdEditor.value;
+  const content = getMarkdownEditorValue();
   if (!content.trim()) {
     showToast('Markdown 内容不能为空');
     return;

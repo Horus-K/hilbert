@@ -13,7 +13,8 @@
     "jsonwebtoken": "^9.0.3",
     "marked": "^18.0.9",
     "multer": "^2.2.0",
-    "undici": "^8.10.0"
+    "undici": "^8.10.0",
+    "vditor": "^3.11.1"
   },
   "engines": {
     "node": ">=24.19.0"

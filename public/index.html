@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hilbert Space</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/vendor/vditor/dist/index.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -118,7 +119,7 @@
             </div>
           </div>
           <article class="md-body" id="mdBody"></article>
-          <textarea class="md-editor hidden" id="mdEditor" placeholder="在这里输入 Markdown 内容…（Ctrl+S 保存）" spellcheck="false"></textarea>
+          <div class="md-editor hidden" id="mdEditor"></div>
         </div>
 
         <!-- 自定义页面：iframe 预览 -->
@@ -385,6 +386,7 @@
   <div class="toast" id="toast"></div>
 
   <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/vditor/dist/index.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

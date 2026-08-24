@@ -25,6 +25,8 @@ function registerRoutes(app, proxy) {
 
   // 4. 静态资源
   app.use(express.static(path.join(__dirname, '../../public')));
+  // Markdown 编辑器资源随应用本地托管，避免运行时依赖外部 CDN。
+  app.use('/vendor/vditor', express.static(path.join(__dirname, '../../node_modules/vditor')));
 
   // 5. 受保护的 API 路由（认证中间件已在 app 层全局注册）
   app.use('/hilbert-api/version', versionRouter);

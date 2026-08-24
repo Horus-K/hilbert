@@ -3,6 +3,13 @@ const { handleProxyRequest } = require('./proxy-handler');
 // 存储已注册的代理路由
 const proxyRoutes = new Map(); // pathPrefix -> { page, mount }
 
+/**
+ * 挂载模式的入口路径：优先自定义挂载路径（如 /jenkins），否则默认 /hilbert-proxy/<页面id>
+ */
+function getMountPath(page) {
+  return page.mountPath || '/hilbert-proxy/' + page.id;
+}
+
 // 最近经由代理转发的请求路径 -> 页面 id（来源归属链）
 const recentProxyPaths = new Map();
 const RECENT_PROXY_PATHS_LIMIT = 5000;
@@ -90,7 +97,7 @@ function findPageByReferer(referer) {
     if (p) {
       return {
         page: p,
-        mountPrefix: p.proxyMode === 'mount' ? '/hilbert-proxy/' + p.id : null
+        mountPrefix: p.proxyMode === 'mount' ? getMountPath(p) : null
       };
     }
   }
@@ -113,7 +120,7 @@ function registerProxyRoutes(app) {
       const fullPath = url.pathname.replace(/\/+$/, '');
 
       if (page.proxyMode === 'mount') {
-        const mountPath = '/hilbert-proxy/' + page.id;
+        const mountPath = getMountPath(page);
         routesToRegister.push({ path: mountPath, page, mount: true, priority: mountPath.length });
         continue;
       }
@@ -149,6 +156,8 @@ function registerProxyRoutes(app) {
       const pagesRepo = require('../repositories/pages.repository');
       const currentPage = pagesRepo.read().find(p => p.id === page.id && p.type === 'link');
       if (!currentPage || (currentPage.proxyMode === 'mount') !== mount) return next();
+      // 挂载路径已变更时陈旧中间件不再接管（Express 重注册无法移除旧路由）
+      if (mount && getMountPath(currentPage) !== path) return next();
       handleProxyRequest(currentPage, req, res, mount ? null : path, mount ? path : undefined);
     });
   }
@@ -183,4 +192,5 @@ module.exports = {
   findPageByReferer,
   recordProxyPath,
   getProxyRoutes,
+  getMountPath,
 };

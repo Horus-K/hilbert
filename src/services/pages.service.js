@@ -2,11 +2,30 @@ const crypto = require('crypto');
 const path = require('path');
 const { PAGE_TYPES } = require('../config');
 const { AppError } = require('../utils/errors');
-const { isValidUrl, normalizeAuth } = require('../utils/validators');
+const { isValidUrl, normalizeAuth, normalizeMountPath } = require('../utils/validators');
 const pagesRepo = require('../repositories/pages.repository');
 const markdownSvc = require('./markdown.service');
 const customPagesSvc = require('./custom-pages.service');
 const pageDocsSvc = require('./page-docs.service');
+
+/**
+ * 检查自定义挂载路径是否与其他页面冲突（其他挂载路径 / 恒等映射的路径前缀）
+ */
+function mountPathConflict(pages, mountPath, excludeId) {
+  return pages.some(p => {
+    if (p.id === excludeId || p.type !== 'link') return false;
+    if (p.proxyMode === 'mount') return (p.mountPath || '/hilbert-proxy/' + p.id) === mountPath;
+    try {
+      const segs = new URL(p.url).pathname.split('/').filter(Boolean);
+      let cur = '';
+      for (const seg of segs) {
+        cur += '/' + seg;
+        if (cur === mountPath) return true;
+      }
+    } catch { /* 无效 URL 忽略 */ }
+    return false;
+  });
+}
 
 /**
  * 获取全部页面（按权限过滤）
@@ -21,7 +40,7 @@ function getAllPages(email, adminCheck, permCheck) {
  * 创建页面
  */
 function createPage(data) {
-  const { type = 'link', name, url, icon, group, content, auth, proxyMode, resolveIp, sourceId } = data;
+  const { type = 'link', name, url, icon, group, content, auth, proxyMode, mountPath, resolveIp, sourceId } = data;
 
   if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
   if (!name || !name.trim()) throw new AppError('页面名称不能为空');
@@ -41,7 +60,15 @@ function createPage(data) {
   if (type === 'link' || type === 'direct' || type === 'iframe') {
     page.url = url.trim();
     if (type === 'link') {
-      if (proxyMode === 'mount') page.proxyMode = 'mount';
+      if (proxyMode === 'mount') {
+        page.proxyMode = 'mount';
+        const mp = normalizeMountPath(mountPath);
+        if (mp === undefined) throw new AppError('挂载路径不合法');
+        if (mp) {
+          if (mountPathConflict(pages, mp)) throw new AppError('挂载路径已被其他页面占用');
+          page.mountPath = mp;
+        }
+      }
       if (resolveIp) page.resolveIp = resolveIp.trim();
       const normalized = normalizeAuth(auth);
       if (normalized === undefined) throw new AppError('认证信息不完整');
@@ -72,7 +99,7 @@ function updatePage(id, data) {
   if (idx === -1) throw new AppError('页面不存在', 404);
 
   const current = pages[idx];
-  const { type, name, url, icon, group, content, auth, proxyMode, resolveIp } = data;
+  const { type, name, url, icon, group, content, auth, proxyMode, mountPath, resolveIp } = data;
 
   if (type !== undefined) {
     if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
@@ -90,6 +117,19 @@ function updatePage(id, data) {
   if (proxyMode !== undefined) {
     if (proxyMode === 'mount') current.proxyMode = 'mount';
     else delete current.proxyMode;
+  }
+  // 自定义挂载路径：仅挂载模式生效，非挂载模式静默清除
+  if (current.proxyMode === 'mount') {
+    if (mountPath !== undefined) {
+      const mp = normalizeMountPath(mountPath);
+      if (mp === undefined) throw new AppError('挂载路径不合法');
+      if (mp) {
+        if (mountPathConflict(pages, mp, id)) throw new AppError('挂载路径已被其他页面占用');
+        current.mountPath = mp;
+      } else delete current.mountPath;
+    }
+  } else {
+    delete current.mountPath;
   }
   if (auth !== undefined) {
     const normalized = normalizeAuth(auth);
@@ -111,11 +151,13 @@ function updatePage(id, data) {
     delete current.content;
     delete current.auth;
     delete current.proxyMode;
+    delete current.mountPath;
     delete current.resolveIp;
   } else {
     if (current.type === 'custom') {
       delete current.auth;
       delete current.url;
+      delete current.mountPath;
       delete current.resolveIp;
       if (data.entry !== undefined) {
         const entry = String(data.entry || 'index.html').trim();
@@ -127,6 +169,7 @@ function updatePage(id, data) {
       delete current.entry;
       delete current.auth;
       delete current.url;
+      delete current.mountPath;
       delete current.resolveIp;
     }
     if (current.type === 'markdown') {

@@ -1,9 +1,24 @@
 const http = require('http');
 const https = require('https');
+const jwt = require('jsonwebtoken');
 const { httpAgent, httpsAgent, httpsAgentNoVerify, applyDnsOverride } = require('./agents');
 const { applyAuthHeaders } = require('./auth-injector');
 const { resolveProxyTarget } = require('./proxy-handler');
 const { findPageByReferer, getProxyRoutes } = require('./route-manager');
+const { GOOGLE_CONFIG } = require('../services/auth.service');
+
+/**
+ * upgrade 事件不经过 Express 中间件，从 Cookie 解析当前登录用户（失败视为匿名）
+ */
+function extractUser(req) {
+  const tokenMatch = (req.headers.cookie || '').match(/(?:^|;\s*)hilbert_token=([^;]+)/);
+  if (!tokenMatch) return null;
+  try {
+    return jwt.verify(decodeURIComponent(tokenMatch[1]), GOOGLE_CONFIG.jwt_secret);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 设置 WebSocket upgrade 转发
@@ -50,7 +65,7 @@ function setupWebSocket(server) {
       delete headers.host;
       headers.origin = base.origin;
       headers.referer = base.origin + '/';
-      await applyAuthHeaders(page, headers);
+      await applyAuthHeaders(page, headers, extractUser(req));
 
       const lib = base.protocol === 'https:' ? https : http;
       const wsUrl = new URL(target);

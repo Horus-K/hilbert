@@ -130,6 +130,8 @@ function signJwt(user) {
     sub: user.id,
     email: user.email,
     name: user.name,
+    displayName: user.displayName || user.name || user.email,
+    groups: Array.isArray(user.groups) ? user.groups : (user.groups ? [user.groups] : []),
     picture: user.picture
   };
   return jwt.sign(payload, GOOGLE_CONFIG.jwt_secret, {

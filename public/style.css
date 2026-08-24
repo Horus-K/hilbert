@@ -398,9 +398,18 @@ body.sidebar-pinned .sidebar-trigger {
   text-overflow: ellipsis;
 }
 
+.user-display-name,
 .user-email {
   font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-groups {
+  font-size: 10px;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

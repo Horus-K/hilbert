@@ -62,7 +62,9 @@
           <img class="avatar-img" id="userAvatar" src="" alt="" />
           <div class="user-info">
             <span class="user-name" id="userName">Admin</span>
+            <span class="user-display-name hidden" id="userDisplayName"></span>
             <span class="user-email" id="userEmail"></span>
+            <span class="user-groups hidden" id="userGroups"></span>
           </div>
           <button class="logout-btn" id="logoutBtn" title="登出">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -217,9 +219,14 @@
           <label>代理模式</label>
           <select id="fieldProxyMode">
             <option value="identity">恒等映射（默认，直接用目标 URL 路径作为代理入口）</option>
-            <option value="mount">挂载 /hilbert-proxy/&lt;页面id&gt;（根路径站点或恒等映射异常时选用）</option>
+            <option value="mount">挂载（根路径站点或恒等映射异常时选用，可自定义路径）</option>
           </select>
           <p class="form-hint" id="proxyModeHint">恒等映射 URL 更简洁；若站点 URL 没有路径（如 https://notes.example.com/），需选择挂载模式</p>
+        </div>
+        <div class="form-item hidden" id="mountPathField">
+          <label>挂载路径</label>
+          <input type="text" id="fieldMountPath" placeholder="如 jenkins（留空则用默认 /hilbert-proxy/&lt;页面id&gt;）" />
+          <p class="form-hint">自定义代理入口路径，配置后通过 /jenkins 访问（如 Jenkins URL 配置直接填该路径）；留空使用默认路径</p>
         </div>
         <div class="form-item hidden" id="authField">
           <label class="checkbox-label">
@@ -232,6 +239,7 @@
               <option value="login">表单登录（用户名密码登录，如 Grafana）</option>
               <option value="oauth">OAuth 2.0 客户端凭证（如 Polaris）</option>
               <option value="header">自定义请求头（如 Bearer 令牌）</option>
+              <option value="identity">当前用户身份透传（如 Jenkins）</option>
             </select>
             <div class="auth-inputs" id="authUserPass">
               <input type="text" id="authUser" placeholder="用户名" autocomplete="off" />
@@ -251,6 +259,13 @@
             <div class="auth-inputs hidden" id="authHeaderInputs">
               <input type="text" id="authHeaderName" placeholder="请求头名称，如 Authorization" />
               <input type="text" id="authHeaderValue" placeholder="请求头值，如 Bearer xxx" />
+            </div>
+            <div class="auth-login-opts hidden" id="authIdentityFields">
+              <input type="text" id="authUserHeader" placeholder="身份请求头名（默认 X-Forwarded-User）" autocomplete="off" />
+              <input type="text" id="authEmailHeader" placeholder="邮箱请求头名（默认 X-Forwarded-Mail）" autocomplete="off" />
+              <input type="text" id="authDisplayNameHeader" placeholder="显示名请求头名（默认 X-Forwarded-DisplayName）" autocomplete="off" />
+              <input type="text" id="authGroupsHeader" placeholder="用户组请求头名（默认 X-Forwarded-Groups）" autocomplete="off" />
+              <p class="form-hint">将当前登录用户的邮箱、显示名和用户组透传给目标站，要求目标站只能通过本服务访问（防伪造）</p>
             </div>
             <div class="hidden" id="authOAuthFields">
               <input type="text" id="authTokenUrl" placeholder="令牌端点 URL（如 https://example.com/oauth/tokens）" autocomplete="off" />

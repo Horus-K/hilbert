@@ -119,10 +119,27 @@ function fetchOAuthToken(page) {
 
 /**
  * 按认证配置构建转发请求头（HTTP 转发与 WebSocket upgrade 共用）
+ * @param {object} user 当前登录用户（JWT 解码结果，含 email/name），identity 模式使用
  */
-async function applyAuthHeaders(page, headers) {
+async function applyAuthHeaders(page, headers, user) {
   const auth = page.auth;
   if (!auth) return;
+  if (auth.mode === 'identity') {
+    // 透传当前登录用户身份（如 Jenkins Reverse Proxy Auth Plugin 信任的请求头）
+    if (user && user.email) {
+      headers[(auth.userHeader || 'X-Forwarded-User').toLowerCase()] = user.email;
+      headers[(auth.emailHeader || 'X-Forwarded-Mail').toLowerCase()] = user.email;
+    }
+    if (user && user.displayName) {
+      headers[(auth.displayNameHeader || 'X-Forwarded-DisplayName').toLowerCase()] = user.displayName;
+    }
+    if (user && user.groups) {
+      headers[(auth.groupsHeader || 'X-Forwarded-Groups').toLowerCase()] = Array.isArray(user.groups)
+        ? user.groups.join(',')
+        : user.groups;
+    }
+    return;
+  }
   if (auth.mode === 'header') {
     headers[auth.headerName.toLowerCase()] = auth.headerValue;
   } else if (auth.mode === 'login') {

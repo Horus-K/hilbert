@@ -12,13 +12,28 @@ function isValidUrl(str) {
 
 /**
  * 校验并规范化认证配置
- * 支持四种模式：basic / login / oauth / header
+ * 支持五种模式：basic / login / oauth / header / identity
  * 返回值：null = 未启用，undefined = 非法配置，对象 = 规范化后的配置
  */
 function normalizeAuth(auth) {
   if (!auth) return null;
   const mode = auth.mode || 'basic'; // 兼容旧数据：无 mode 视为 basic
-  if (!['basic', 'login', 'oauth', 'header'].includes(mode)) return undefined;
+  if (!['basic', 'login', 'oauth', 'header', 'identity'].includes(mode)) return undefined;
+  if (mode === 'identity') {
+    const defaults = {
+      userHeader: 'X-Forwarded-User',
+      emailHeader: 'X-Forwarded-Mail',
+      displayNameHeader: 'X-Forwarded-DisplayName',
+      groupsHeader: 'X-Forwarded-Groups'
+    };
+    const normalized = { mode };
+    for (const [key, fallback] of Object.entries(defaults)) {
+      const headerName = String(auth[key] || fallback).trim() || fallback;
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName)) return undefined;
+      normalized[key] = headerName;
+    }
+    return normalized;
+  }
   if (mode === 'header') {
     if (!auth.headerName || !String(auth.headerValue).trim()) return undefined;
     return { mode, headerName: String(auth.headerName).trim(), headerValue: String(auth.headerValue) };
@@ -60,4 +75,23 @@ function normalizeAuth(auth) {
   return normalized;
 }
 
-module.exports = { isValidUrl, normalizeAuth };
+/**
+ * 校验并规范化挂载模式的自定义路径（如 /jenkins）
+ * 返回：null = 未配置（回退默认 /hilbert-proxy/<id>），undefined = 非法，字符串 = 规范化路径
+ */
+function normalizeMountPath(mountPath) {
+  if (mountPath === undefined || mountPath === null) return null;
+  let path = String(mountPath).trim();
+  if (!path) return null;
+  if (!path.startsWith('/')) path = '/' + path;
+  path = '/' + path.split('/').filter(Boolean).join('/');
+  // 每段仅允许 URL 安全字符，且拒绝纯点段（./..）防止路径逃逸与注入
+  if (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(path)) return undefined;
+  if (path.split('/').some(seg => /^\.+$/.test(seg))) return undefined;
+  // 保留前缀：系统 API / 静态托管 / 默认挂载根 / 页面查看器
+  const reserved = ['hilbert-api', 'hilbert-custom', 'hilbert-proxy', 'page'];
+  if (reserved.includes(path.split('/')[1])) return undefined;
+  return path;
+}
+
+module.exports = { isValidUrl, normalizeAuth, normalizeMountPath };

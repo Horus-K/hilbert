@@ -60,7 +60,9 @@ const modalFileUploadZone = $('modalFileUploadZone');
 const customFileField = $('customFileField');
 const userAvatar = $('userAvatar');
 const userName = $('userName');
+const userDisplayName = $('userDisplayName');
 const userEmail = $('userEmail');
+const userGroups = $('userGroups');
 const logoutBtn = $('logoutBtn');
 const tabPanels = $('tabPanels');
 const tabBar = $('tabBar');
@@ -572,7 +574,7 @@ function activateTab(tabId) {
           } else {
             const pageUrl = new URL(page.url);
             const pagePath = pageUrl.pathname.replace(/\/+$/, '');
-            iframe.src = (page.proxyMode === 'mount' ? '/hilbert-proxy/' + page.id + '/' : (pagePath || '/'))
+                        iframe.src = (page.proxyMode === 'mount' ? (page.mountPath || '/hilbert-proxy/' + page.id) + '/' : (pagePath || '/'))
               + (pageUrl.search || '');
           }
         }
@@ -1578,6 +1580,7 @@ function setType(type) {
   // 直链和直接嵌入只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.toggle('hidden', !isLink);
+  $('mountPathField').classList.toggle('hidden', !isLink || $('fieldProxyMode').value !== 'mount');
   $('authField').classList.toggle('hidden', !isLink);
   $('customFileField').classList.toggle('hidden', type !== 'custom');
   $('fieldUrl').required = needUrl;
@@ -1602,13 +1605,14 @@ $('authEnabled').addEventListener('change', () => {
   $('authBox').classList.toggle('hidden', !$('authEnabled').checked);
 });
 
-// 认证模式切换：basic/login 显示账号密码，header 显示自定义头，oauth 显示客户端凭证，login 额外显示登录路径与请求格式
+// 认证模式切换：basic/login 显示账号密码，header 显示自定义头，oauth 显示客户端凭证，identity 显示身份请求头名，login 额外显示登录路径与请求格式
 function setAuthMode(mode) {
   $('authMode').value = mode;
-  $('authUserPass').classList.toggle('hidden', mode === 'header' || mode === 'oauth');
+  $('authUserPass').classList.toggle('hidden', mode === 'header' || mode === 'oauth' || mode === 'identity');
   $('authLoginPath').classList.toggle('hidden', mode !== 'login');
   $('authLoginOpts').classList.toggle('hidden', mode !== 'login');
   $('authHeaderInputs').classList.toggle('hidden', mode !== 'header');
+  $('authIdentityFields').classList.toggle('hidden', mode !== 'identity');
   $('authOAuthFields').classList.toggle('hidden', mode !== 'oauth');
 }
 $('authMode').addEventListener('change', () => setAuthMode($('authMode').value));
@@ -1639,7 +1643,11 @@ function updateProxyModeHint() {
   }
 }
 $('fieldUrl').addEventListener('input', updateProxyModeHint);
-$('fieldProxyMode').addEventListener('change', updateProxyModeHint);
+$('fieldProxyMode').addEventListener('change', () => {
+  updateProxyModeHint();
+  // 挂载模式才显示自定义挂载路径输入框
+  $('mountPathField').classList.toggle('hidden', $('fieldProxyMode').value !== 'mount');
+});
 
 function openModal(page = null) {
   editingId = page ? page.id : null;
@@ -1648,6 +1656,7 @@ function openModal(page = null) {
   $('fieldUrl').value = page && page.type !== 'markdown' ? page.url : '';
   $('fieldResolveIp').value = page ? (page.resolveIp || '') : '';
   $('fieldProxyMode').value = page && page.proxyMode === 'mount' ? 'mount' : 'identity';
+  $('fieldMountPath').value = page && page.mountPath ? page.mountPath.replace(/^\//, '') : '';
   updateProxyModeHint();
   $('fieldIcon').value = page ? page.icon : '';
   const hasAuth = !!(page && page.auth);
@@ -1663,6 +1672,10 @@ function openModal(page = null) {
   $('authPasswordField').value = hasAuth && page.auth.passwordField !== 'password' ? (page.auth.passwordField || '') : '';
   $('authHeaderName').value = hasAuth ? (page.auth.headerName || '') : '';
   $('authHeaderValue').value = hasAuth ? (page.auth.headerValue || '') : '';
+  $('authUserHeader').value = hasAuth && page.auth.userHeader !== 'X-Forwarded-User' ? (page.auth.userHeader || '') : '';
+  $('authEmailHeader').value = hasAuth && page.auth.emailHeader !== 'X-Forwarded-Mail' ? (page.auth.emailHeader || '') : '';
+  $('authDisplayNameHeader').value = hasAuth && page.auth.displayNameHeader !== 'X-Forwarded-DisplayName' ? (page.auth.displayNameHeader || '') : '';
+  $('authGroupsHeader').value = hasAuth && page.auth.groupsHeader !== 'X-Forwarded-Groups' ? (page.auth.groupsHeader || '') : '';
   $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
   $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
   $('authClientSecret').value = hasAuth ? (page.auth.clientSecret || '') : '';
@@ -1701,6 +1714,8 @@ $('pageForm').addEventListener('submit', async e => {
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();
     body.proxyMode = $('fieldProxyMode').value;
+    // 自定义挂载路径：非挂载模式传空串，后端会清除该字段
+    body.mountPath = $('fieldMountPath').value.trim();
     // 始终传递 resolveIp（空字符串时后端会删除该字段）
     body.resolveIp = $('fieldResolveIp').value.trim();
     // 认证配置：勾选时按所选模式提交，未勾选时显式清除
@@ -1712,6 +1727,17 @@ $('pageForm').addEventListener('submit', async e => {
           headerName: $('authHeaderName').value.trim(),
           headerValue: $('authHeaderValue').value.trim()
         };
+      } else if (mode === 'identity') {
+        body.auth = { mode };
+        const identityHeaders = {
+          userHeader: $('authUserHeader').value.trim(),
+          emailHeader: $('authEmailHeader').value.trim(),
+          displayNameHeader: $('authDisplayNameHeader').value.trim(),
+          groupsHeader: $('authGroupsHeader').value.trim()
+        };
+        for (const [key, value] of Object.entries(identityHeaders)) {
+          if (value) body.auth[key] = value;
+        }
       } else if (mode === 'oauth') {
         body.auth = {
           mode,
@@ -2034,7 +2060,21 @@ async function init() {
         userAvatar.alt = me.name || '';
       }
       userName.textContent = me.name || 'Admin';
+      if (me.displayName && me.displayName !== me.name) {
+        userDisplayName.textContent = me.displayName;
+        userDisplayName.classList.remove('hidden');
+      } else {
+        userDisplayName.textContent = '';
+        userDisplayName.classList.add('hidden');
+      }
       userEmail.textContent = me.email || '';
+      if (Array.isArray(me.groups) && me.groups.length) {
+        userGroups.textContent = me.groups.join(', ');
+        userGroups.classList.remove('hidden');
+      } else {
+        userGroups.textContent = '';
+        userGroups.classList.add('hidden');
+      }
       isAdmin = !!me.isAdmin;
       currentUserEmail = me.email || '';
       await loadFavorites();

@@ -86,7 +86,7 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
       headers['accept-encoding'] = 'gzip, deflate, br';
       headers['content-length'] = bodyBuf.length;
 
-      await applyAuthHeaders(page, headers);
+      await applyAuthHeaders(page, headers, req.user);
 
       await new Promise((resolve, reject) => {
         const hasDnsOverride = !!(page && page.resolveIp);

@@ -7,7 +7,9 @@ const { isAdmin, getUserPermissions } = require('../services/rbac.service');
 router.get('/me', (req, res) => {
   res.json({
     name: req.user.name || req.user.email,
+    displayName: req.user.displayName || req.user.name || req.user.email,
     email: req.user.email,
+    groups: Array.isArray(req.user.groups) ? req.user.groups : (req.user.groups ? [req.user.groups] : []),
     picture: req.user.picture || null,
     isAdmin: isAdmin(req.user.email)
   });

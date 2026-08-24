@@ -24,7 +24,7 @@
   - Origin/Referer 改写绕过 CSRF 校验、WebSocket 双向透传（Grafana live）
   - 两种代理模式（编辑页面可选）：
     - **恒等映射**（默认）：代理路径直接使用目标页面 URL 路径（如 `/xxl-job-admin/`），绝对路径无需重写
-    - **挂载** `/hilbert-proxy/<页面id>`：适用于 URL 无路径的根路径站点（与面板根路径冲突）或恒等映射异常的站点，自动做 HTML/CSS 绝对路径重写 + `appSubUrl` 注入
+    - **挂载** `/hilbert-proxy/<页面id>`：适用于 URL 无路径的根路径站点（与面板根路径冲突）或恒等映射异常的站点，自动做 HTML/CSS 绝对路径重写 + `appSubUrl` 注入；支持自定义挂载路径（如 `/jenkins`），配置后以该路径作为代理入口
 
 ## 技术栈
 
@@ -214,7 +214,7 @@ spec:
 | POST | `/hilbert-api/rbac/assignments` | 新建分配（仅管理员） |
 | DELETE | `/hilbert-api/rbac/assignments/:email/:roleId` | 删除分配（仅管理员） |
 | ANY | `/<页面URL路径>/**` | 反向代理（恒等映射，自动认证） |
-| ANY | `/hilbert-proxy/<页面id>/**` | 挂载模式页面的代理（前缀剥离 + HTML/CSS 重写） |
+| ANY | `/hilbert-proxy/<页面id>/**` | 挂载模式页面的代理（前缀剥离 + HTML/CSS 重写，可自定义为 `/jenkins` 等路径） |
 | GET | `/hilbert-custom/<页面id>/**` | 自定义页面静态资源服务 |
 
 ## 版本

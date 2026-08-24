@@ -7,8 +7,6 @@ const { page_proxy: pageProxy } = require('../config');
 // 出方向代理连接池：复用与目标站的 TCP/TLS 连接，避免每个请求重新三次握手
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
-// DNS 覆盖专用 agent：连接 IP 时跳过证书校验（证书是原始域名的，与 IP 不匹配）
-const httpsAgentNoVerify = new https.Agent({ keepAlive: true, rejectUnauthorized: false });
 
 let pageProxyUrl = null;
 let pageHttpProxyAgent = null;
@@ -36,9 +34,7 @@ function getPageRequestAgent(targetUrl, page) {
   if (pageProxyUrl) {
     return protocol === 'https:' ? pageHttpsProxyAgent : pageHttpProxyAgent;
   }
-  if (protocol === 'https:') {
-    return page && page.resolveIp ? httpsAgentNoVerify : httpsAgent;
-  }
+  if (protocol === 'https:') return httpsAgent;
   return httpAgent;
 }
 
@@ -60,7 +56,6 @@ function applyDnsOverride(page, targetUrl, base, headers) {
 module.exports = {
   httpAgent,
   httpsAgent,
-  httpsAgentNoVerify,
   getPageRequestAgent,
   applyDnsOverride
 };

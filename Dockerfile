@@ -12,7 +12,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM node:24.19.0-alpine
 
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    EXTERNAL_PROXY_PORT=3001
 
 WORKDIR /app
 
@@ -26,7 +27,7 @@ RUN mkdir -p /app/data /app/data/custom-pages && chown -R node:node /app
 VOLUME ["/app/data"]
 
 USER node
-EXPOSE 3000
+EXPOSE 3000 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:${PORT}/hilbert-api/health || exit 1

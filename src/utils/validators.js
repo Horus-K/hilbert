@@ -26,9 +26,7 @@ function normalizeAuth(auth) {
       displayNameHeader: 'X-Forwarded-DisplayName',
       groupsHeader: 'X-Forwarded-Groups',
       idHeader: 'X-Forwarded-User-Id',
-      pictureHeader: 'X-Forwarded-User-Picture',
-      googleAuthHeader: 'X-Forwarded-Google-Auth',
-      googleAccessTokenHeader: 'X-Forwarded-Google-Access-Token'
+      pictureHeader: 'X-Forwarded-User-Picture'
     };
     const normalized = { mode };
     for (const [key, fallback] of Object.entries(defaults)) {
@@ -36,13 +34,38 @@ function normalizeAuth(auth) {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName)) return undefined;
       normalized[key] = headerName;
     }
-    normalized.forwardGoogleAuth = auth.forwardGoogleAuth === true;
-    normalized.forwardGoogleAccessToken = auth.forwardGoogleAccessToken === true;
+    const defaultClaims = [
+      { claim: 'email', header: normalized.userHeader },
+      { claim: 'email', header: normalized.emailHeader },
+      { claim: 'displayName', header: normalized.displayNameHeader },
+      { claim: 'groups', header: normalized.groupsHeader, format: 'csv' },
+      { claim: 'sub', fallbackClaim: 'id', header: normalized.idHeader },
+      { claim: 'picture', header: normalized.pictureHeader }
+    ];
+    const claims = Array.isArray(auth.claims) ? auth.claims : defaultClaims;
+    normalized.claims = [];
+    for (const mapping of claims) {
+      const header = String(mapping && mapping.header || '').trim();
+      const claim = String(mapping && mapping.claim || '').trim();
+      const fallbackClaim = mapping && mapping.fallbackClaim
+        ? String(mapping.fallbackClaim).trim()
+        : undefined;
+      const format = String(mapping && mapping.format || 'text');
+      if (!header || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) return undefined;
+      if (!/^[A-Za-z0-9_.-]+$/.test(claim)) return undefined;
+      if (fallbackClaim && !/^[A-Za-z0-9_.-]+$/.test(fallbackClaim)) return undefined;
+      if (!['text', 'csv', 'json', 'base64url'].includes(format)) return undefined;
+      normalized.claims.push({ claim, header, format, ...(fallbackClaim ? { fallbackClaim } : {}) });
+    }
     return normalized;
   }
   if (mode === 'header') {
     if (!auth.headerName || !String(auth.headerValue).trim()) return undefined;
-    return { mode, headerName: String(auth.headerName).trim(), headerValue: String(auth.headerValue) };
+    const headerName = String(auth.headerName).trim();
+    const headerValue = String(auth.headerValue);
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName)) return undefined;
+    if (/[\r\n]/.test(headerValue)) return undefined;
+    return { mode, headerName, headerValue };
   }
   if (mode === 'oauth') {
     if (!auth.tokenUrl || !auth.clientId || !auth.clientSecret) return undefined;
@@ -63,11 +86,10 @@ function normalizeAuth(auth) {
   if (!auth.username || !auth.password) return undefined;
   const normalized = { mode, username: String(auth.username), password: String(auth.password) };
   if (mode === 'login') {
-    // 登录接口路径，默认 /login（Grafana 等均为该路径）
+    // 登录地址可使用根路径或相对于页面 URL 的路径；运行时强制与目标页面同源。
     let loginPath = String(auth.loginPath || '/login').trim() || '/login';
-    if (!loginPath.startsWith('/')) loginPath = '/' + loginPath;
     normalized.loginPath = loginPath;
-    // 登录请求体格式：json（默认，如 Grafana）/ form（表单编码，如 XXL-JOB）
+    // 登录请求体格式：JSON 或标准表单编码。
     const loginFormat = auth.loginFormat || 'json';
     if (!['json', 'form'].includes(loginFormat)) return undefined;
     normalized.loginFormat = loginFormat;
@@ -77,12 +99,26 @@ function normalizeAuth(auth) {
     if (!userField || !passwordField) return undefined;
     normalized.userField = userField;
     normalized.passwordField = passwordField;
+    if (auth.loginSuccessStatuses !== undefined) {
+      if (!Array.isArray(auth.loginSuccessStatuses) ||
+          auth.loginSuccessStatuses.some(code => !Number.isInteger(code) || code < 100 || code > 599)) {
+        return undefined;
+      }
+      normalized.loginSuccessStatuses = [...new Set(auth.loginSuccessStatuses)];
+    }
+    if (auth.expiredStatuses !== undefined) {
+      if (!Array.isArray(auth.expiredStatuses) ||
+          auth.expiredStatuses.some(code => !Number.isInteger(code) || code < 100 || code > 599)) {
+        return undefined;
+      }
+      normalized.expiredStatuses = [...new Set(auth.expiredStatuses)];
+    }
   }
   return normalized;
 }
 
 /**
- * 校验并规范化挂载模式的自定义路径（如 /jenkins）
+ * 校验并规范化隔离代理 origin 内的自定义挂载路径
  * 返回：null = 未配置（回退默认 /hilbert-proxy/<id>），undefined = 非法，字符串 = 规范化路径
  */
 function normalizeMountPath(mountPath) {

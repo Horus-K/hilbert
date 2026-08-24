@@ -4,12 +4,13 @@ const { hasPermission, isAdmin } = require('../services/rbac.service');
 const pagesService = require('../services/pages.service');
 const customPagesService = require('../services/custom-pages.service');
 const { AppError } = require('../utils/errors');
+const { exposeProxyOrigin } = require('../utils/proxy-origin');
 
 // 获取全部页面（按权限过滤）
 router.get('/', (req, res) => {
   const email = req.user.email;
   const pages = pagesService.getAllPages(email, isAdmin, hasPermission);
-  res.json(pages);
+  res.json(pages.map(page => exposeProxyOrigin(page, req)));
 });
 
 // 新增页面
@@ -18,7 +19,7 @@ router.post('/', (req, res) => {
     throw new AppError('没有创建页面的权限', 403);
   }
   const page = pagesService.createPage(req.body);
-  res.status(201).json(page);
+  res.status(201).json(exposeProxyOrigin(page, req));
 });
 
 // 更新页面
@@ -27,7 +28,7 @@ router.put('/:id', (req, res) => {
     throw new AppError('没有修改该页面的权限', 403);
   }
   const page = pagesService.updatePage(req.params.id, req.body);
-  res.json(page);
+  res.json(exposeProxyOrigin(page, req));
 });
 
 // 删除页面

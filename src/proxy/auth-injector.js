@@ -1,9 +1,10 @@
 const http = require('http');
 const https = require('https');
 const { applyDnsOverride, getPageRequestAgent } = require('./agents');
+const { clearCookieJar, getCookieHeader, storeResponseCookies, userKey } = require('./cookie-jar');
 
-// login 模式的会话缓存：pageId -> 会话 Cookie 字符串
-const sessionCache = new Map();
+// login 模式的会话状态：页面与当前 Hilbert 用户相互隔离。
+const loginSessions = new Map();
 // oauth 模式的令牌缓存：pageId -> { token, expiresAt }
 const tokenCache = new Map();
 
@@ -13,12 +14,35 @@ function toHeaderValue(value) {
   return /[^\t\x20-\x7e\x80-\xff]/.test(text) ? encodeURIComponent(text) : text;
 }
 
+function getClaim(user, path) {
+  return String(path).split('.').reduce((value, key) => value == null ? undefined : value[key], user);
+}
+
+function formatClaim(value, format) {
+  if (format === 'csv' && Array.isArray(value)) return value.join(',');
+  if (format === 'json') return JSON.stringify(value);
+  if (format === 'base64url') {
+    return Buffer.from(typeof value === 'string' ? value : JSON.stringify(value), 'utf8').toString('base64url');
+  }
+  return value;
+}
+
 /**
- * 执行一次表单登录，返回会话 Cookie 字符串
+ * 执行一次声明式登录，并把目标会话 Cookie 写入当前页面/用户的服务端 Cookie jar。
  */
-function performLogin(page, base) {
+function resolveLoginUrl(page, base) {
+  const loginPath = page.auth.loginPath;
+  const baseDirectory = new URL(base.href);
+  if (!baseDirectory.pathname.endsWith('/')) {
+    baseDirectory.pathname = baseDirectory.pathname.slice(0, baseDirectory.pathname.lastIndexOf('/') + 1);
+  }
+  baseDirectory.search = '';
+  baseDirectory.hash = '';
+  return new URL(loginPath, baseDirectory);
+}
+
+function performLogin(page, base, user) {
   return new Promise((resolve, reject) => {
-    const lib = base.protocol === 'https:' ? https : http;
     const auth = page.auth;
     const credentials = { [auth.userField]: auth.username, [auth.passwordField]: auth.password };
     const body = auth.loginFormat === 'form'
@@ -35,18 +59,27 @@ function performLogin(page, base) {
         'Accept': 'application/json'
       }
     };
-    // DNS 覆盖
-    const loginUrl = new URL(base.origin + auth.loginPath);
-    const loginDnsOpts = applyDnsOverride(page, loginUrl, base, loginOpts.headers);
+    const logicalLoginUrl = resolveLoginUrl(page, base);
+    if (logicalLoginUrl.origin !== base.origin) {
+      return reject(new Error('登录地址必须与目标页面同源'));
+    }
+    const lib = logicalLoginUrl.protocol === 'https:' ? https : http;
+    const networkLoginUrl = new URL(logicalLoginUrl.href);
+    const loginDnsOpts = applyDnsOverride(page, networkLoginUrl, base, loginOpts.headers);
     Object.assign(loginOpts, loginDnsOpts);
-    loginOpts.agent = getPageRequestAgent(loginUrl, page);
-    const loginReq = lib.request(loginUrl, loginOpts, loginRes => {
+    loginOpts.agent = getPageRequestAgent(networkLoginUrl, page);
+    const loginReq = lib.request(networkLoginUrl, loginOpts, loginRes => {
       const setCookies = loginRes.headers['set-cookie'] || [];
       const chunks = [];
       loginRes.on('data', c => chunks.push(c));
       loginRes.on('end', () => {
-        if (loginRes.statusCode >= 200 && loginRes.statusCode < 300 && setCookies.length) {
-          resolve(setCookies.map(c => c.split(';')[0]).join('; '));
+        const acceptedStatuses = auth.loginSuccessStatuses || [];
+        const accepted = acceptedStatuses.length
+          ? acceptedStatuses.includes(loginRes.statusCode)
+          : loginRes.statusCode >= 200 && loginRes.statusCode < 400;
+        if (accepted && setCookies.length) {
+          storeResponseCookies(page, user, logicalLoginUrl, setCookies);
+          resolve();
           return;
         }
         const detail = Buffer.concat(chunks).toString('utf8').slice(0, 200);
@@ -123,50 +156,41 @@ function fetchOAuthToken(page) {
  * 按认证配置构建转发请求头（HTTP 转发与 WebSocket upgrade 共用）
  * @param {object} user 当前登录用户（JWT 解码结果，含 email/name），identity 模式使用
  */
-async function applyAuthHeaders(page, headers, user) {
+async function applyAuthHeaders(page, headers, user, targetUrl) {
+  // 浏览器请求中的 Cookie 属于 Hilbert/代理 origin，绝不能直接转发给目标站。
+  delete headers.cookie;
+  const storedCookie = getCookieHeader(page, user, targetUrl);
+  if (storedCookie) headers.cookie = storedCookie;
+
   const auth = page.auth;
   if (!auth) return;
   if (auth.mode === 'identity') {
-    // 透传当前登录用户身份（如 Jenkins Reverse Proxy Auth Plugin 信任的请求头）
-    if (user && user.email) {
-      headers[(auth.userHeader || 'X-Forwarded-User').toLowerCase()] = toHeaderValue(user.email);
-      headers[(auth.emailHeader || 'X-Forwarded-Mail').toLowerCase()] = toHeaderValue(user.email);
-    }
-    if (user && user.displayName) {
-      headers[(auth.displayNameHeader || 'X-Forwarded-DisplayName').toLowerCase()] = toHeaderValue(user.displayName);
-    }
-    if (user && (user.sub || user.id)) {
-      headers[(auth.idHeader || 'X-Forwarded-User-Id').toLowerCase()] = toHeaderValue(user.sub || user.id);
-    }
-    if (user && user.picture) {
-      headers[(auth.pictureHeader || 'X-Forwarded-User-Picture').toLowerCase()] = toHeaderValue(user.picture);
-    }
-    if (user && user.groups) {
-      headers[(auth.groupsHeader || 'X-Forwarded-Groups').toLowerCase()] = Array.isArray(user.groups)
-        ? toHeaderValue(user.groups.join(','))
-        : toHeaderValue(user.groups);
-    }
-    if (auth.forwardGoogleAuth && user && user.googleAuth) {
-      headers[(auth.googleAuthHeader || 'X-Forwarded-Google-Auth').toLowerCase()] =
-        Buffer.from(JSON.stringify(user.googleAuth), 'utf8').toString('base64url');
-    }
-    const accessTokenExpired = user && user.googleAccessTokenExpiresAt &&
-      Number(user.googleAccessTokenExpiresAt) <= Date.now();
-    if (auth.forwardGoogleAccessToken && user && user.googleAccessToken && !accessTokenExpired) {
-      headers[(auth.googleAccessTokenHeader || 'X-Forwarded-Google-Access-Token').toLowerCase()] =
-        toHeaderValue(user.googleAccessToken);
+    for (const mapping of auth.claims || []) {
+      let value = getClaim(user, mapping.claim);
+      if (value === undefined && mapping.fallbackClaim) value = getClaim(user, mapping.fallbackClaim);
+      if (value !== undefined && value !== null && value !== '') {
+        headers[mapping.header.toLowerCase()] = toHeaderValue(formatClaim(value, mapping.format));
+      }
     }
     return;
   }
   if (auth.mode === 'header') {
     headers[auth.headerName.toLowerCase()] = auth.headerValue;
   } else if (auth.mode === 'login') {
-    let cookie = sessionCache.get(page.id);
-    if (!cookie) {
-      cookie = await performLogin(page, new URL(page.url));
-      sessionCache.set(page.id, cookie);
+    const sessionKey = `${page.id}:${userKey(user)}`;
+    if (!loginSessions.has(sessionKey)) {
+      const pendingLogin = performLogin(page, new URL(page.url), user)
+        .then(() => true)
+        .catch(err => {
+          loginSessions.delete(sessionKey);
+          throw err;
+        });
+      loginSessions.set(sessionKey, pendingLogin);
     }
-    headers.cookie = cookie;
+    await loginSessions.get(sessionKey);
+    const loginCookie = getCookieHeader(page, user, targetUrl);
+    if (loginCookie) headers.cookie = loginCookie;
+    else delete headers.cookie;
   } else if (auth.mode === 'oauth') {
     const cached = tokenCache.get(page.id);
     if (!cached || cached.expiresAt < Date.now()) {
@@ -186,9 +210,21 @@ async function applyAuthHeaders(page, headers, user) {
 /**
  * 清除指定页面的会话缓存（会话过期时调用）
  */
-function clearSession(pageId) {
-  sessionCache.delete(pageId);
+function clearSession(pageId, user) {
+  if (user) loginSessions.delete(`${pageId}:${userKey(user)}`);
+  else {
+    const prefix = `${pageId}:`;
+    for (const key of loginSessions.keys()) {
+      if (key.startsWith(prefix)) loginSessions.delete(key);
+    }
+  }
   tokenCache.delete(pageId);
+  clearCookieJar(pageId, user);
 }
 
-module.exports = { applyAuthHeaders, clearSession, sessionCache };
+module.exports = {
+  applyAuthHeaders,
+  clearSession,
+  loginSessions,
+  resolveLoginUrl
+};

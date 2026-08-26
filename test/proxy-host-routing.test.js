@@ -1,3 +1,12 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const testDataDir = path.join(os.tmpdir(), 'hilbert-host-' + process.pid);
+fs.rmSync(testDataDir, { recursive: true, force: true });
+process.env.HILBERT_DATA_DIR = testDataDir;
+process.env.DATA_ENCRYPTION_KEY = 'test-data-encryption-key-host';
+process.on('exit', () => fs.rmSync(testDataDir, { recursive: true, force: true }));
+
 process.env.PORT = '3000';
 process.env.EXTERNAL_PROXY_PORT = '30001';
 process.env.EXTERNAL_PROXY_PUBLIC_PORT = '';
@@ -38,6 +47,7 @@ const {
   getExternalProxyOrigin
 } = require('../src/utils/proxy-origin');
 const { resolveUpgradeContext, setupWebSocket } = require('../src/proxy/websocket');
+const sessionRegistry = require('../src/services/session-registry.service');
 
 function listen(app) {
   return new Promise(resolve => {
@@ -126,9 +136,11 @@ test('一次性票据只能兑换一次，页面会话绑定单个页面 Host', 
   assert.throws(() => normalizeNextPath('//evil.test/path'));
   assert.throws(() => normalizeNextPath('/\\evil.test/path'));
 
-  const token = signProxySession(page.id, user);
-  assert.equal(verifyProxySession(token, page.id).email, user.email);
-  assert.equal(verifyProxySession(token, 'page-b'), null);
+  const issued = signProxySession(page.id, user);
+  assert.equal(verifyProxySession(issued.token, page.id).email, user.email);
+  assert.equal(verifyProxySession(issued.token, 'page-b'), null);
+  sessionRegistry.revoke(issued.session.id, 'host-admin@example.test');
+  assert.equal(verifyProxySession(issued.token, page.id), null);
 });
 
 test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 WebSocket 路由', async () => {

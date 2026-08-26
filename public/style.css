@@ -2454,3 +2454,70 @@ body {
   .welcome-actions { flex-direction: column; width: min(100%, 260px); }
   .welcome-actions .primary-btn, .welcome-actions .ghost-btn { justify-content: center; }
 }
+
+/* ---------- 运维设置 ---------- */
+.ops-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+.ops-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.45);
+  min-width: 0;
+}
+.ops-status-item span { color: var(--text-muted); font-size: 12px; }
+.ops-status-item strong { font-size: 13px; overflow-wrap: anywhere; }
+.ops-toolbar { display: flex; gap: 10px; margin-top: 16px; }
+.ops-toolbar input, .ops-toolbar select {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--main-bg);
+  color: var(--text-primary);
+}
+.ops-result {
+  margin-top: 14px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 9px;
+  background: #111827;
+  color: #d1fae5;
+  font: 12px/1.6 "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+}
+.ops-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.ops-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.42);
+}
+.ops-row > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ops-row strong { overflow-wrap: anywhere; }
+.ops-row small { color: var(--text-muted); overflow-wrap: anywhere; }
+.ops-row-actions { display: flex; flex-direction: row !important; gap: 7px !important; flex-shrink: 0; }
+.ops-row-actions .ghost-btn, .ops-row-actions .danger-btn { text-decoration: none; white-space: nowrap; }
+.ops-audit-list { max-height: 520px; overflow-y: auto; }
+.ops-audit-row code { color: var(--text-muted); font-size: 11px; }
+.ops-outcome { font-size: 10px; padding: 2px 5px; border-radius: 10px; text-transform: uppercase; }
+.ops-outcome.success { color: #047857; background: #d1fae5; }
+.ops-outcome.failure { color: #b91c1c; background: #fee2e2; }
+
+@media (max-width: 720px) {
+  .ops-toolbar, .ops-row { flex-direction: column; align-items: stretch; }
+  .ops-row-actions { flex-wrap: wrap; }
+}

@@ -153,30 +153,46 @@
             <ul class="group-list" id="groupList"></ul>
           </div>
 
-          <!-- RBAC 权限管理（仅超级管理员可见） -->
           <div class="settings-card hidden" id="rbacPanel">
             <h2>🔐 权限管理</h2>
             <p class="settings-desc">基于角色的访问控制（RBAC）：创建角色并分配页面权限，然后将角色绑定到用户邮箱。超级管理员拥有所有权限。</p>
-
-            <!-- 角色列表 -->
             <div class="rbac-section">
-              <div class="rbac-section-header">
-                <h3>角色列表</h3>
-                <button class="primary-btn" id="rbacNewRoleBtn">＋ 新建角色</button>
-              </div>
-              <div class="rbac-role-list" id="rbacRoleList"><!-- 动态渲染 --></div>
+              <div class="rbac-section-header"><h3>角色列表</h3><button class="primary-btn" id="rbacNewRoleBtn">＋ 新建角色</button></div>
+              <div class="rbac-role-list" id="rbacRoleList"></div>
             </div>
-
-            <!-- 邮箱分配 -->
             <div class="rbac-section">
-              <div class="rbac-section-header">
-                <h3>邮箱分配</h3>
-                <button class="primary-btn" id="rbacNewAssignBtn">＋ 分配角色</button>
-              </div>
-              <div class="rbac-assign-list" id="rbacAssignList"><!-- 动态渲染 --></div>
+              <div class="rbac-section-header"><h3>邮箱分配</h3><button class="primary-btn" id="rbacNewAssignBtn">＋ 分配角色</button></div>
+              <div class="rbac-assign-list" id="rbacAssignList"></div>
               <p class="rbac-admin-hint" id="rbacAdminHint" style="display:none">💡 超级管理员的权限不受任何分配影响，始终拥有所有页面的全部权限</p>
             </div>
-            </div>
+          </div>
+
+          <div class="settings-card hidden" id="opsPanel">
+            <div class="rbac-section-header"><div><h2>🛠️ 系统状态</h2><p class="settings-desc">运行状态、数据存储、代理、加密和会话概览。</p></div><button class="ghost-btn" id="opsRefreshStatusBtn">刷新</button></div>
+            <div class="ops-status-grid" id="opsStatusGrid"></div>
+          </div>
+
+          <div class="settings-card hidden" id="diagnosticsPanel">
+            <h2>🩺 代理诊断</h2>
+            <p class="settings-desc">使用服务端真实代理、DNS 覆盖和页面认证配置测试上游连通性。</p>
+            <div class="ops-toolbar"><select id="opsDiagnosticPage"></select><button class="primary-btn" id="opsRunDiagnosticBtn">开始诊断</button></div>
+            <pre class="ops-result hidden" id="opsDiagnosticResult"></pre>
+          </div>
+
+          <div class="settings-card hidden" id="backupsPanel">
+            <div class="rbac-section-header"><div><h2>💾 备份与恢复</h2><p class="settings-desc">创建完整数据备份；恢复前会自动创建安全备份。</p></div><button class="primary-btn" id="opsCreateBackupBtn">创建备份</button></div>
+            <div class="ops-list" id="opsBackupList"></div>
+          </div>
+
+          <div class="settings-card hidden" id="sessionsPanel">
+            <div class="rbac-section-header"><div><h2>🖥️ 活跃会话</h2><p class="settings-desc">查看主站和页面代理会话，撤销主会话时会同时撤销其页面会话。</p></div><button class="ghost-btn" id="opsRefreshSessionsBtn">刷新</button></div>
+            <div class="ops-list" id="opsSessionList"></div>
+          </div>
+
+          <div class="settings-card hidden" id="auditPanel">
+            <div class="rbac-section-header"><div><h2>📜 审计日志</h2><p class="settings-desc">记录设置修改、备份恢复、诊断、登录和会话撤销操作。</p></div><button class="ghost-btn" id="opsRefreshAuditBtn">刷新</button></div>
+            <div class="ops-toolbar"><input id="opsAuditActor" placeholder="操作者邮箱" /><input id="opsAuditAction" placeholder="操作，如 backup" /></div>
+            <div class="ops-list ops-audit-list" id="opsAuditList"></div>
           </div>
         </div>
       </section>

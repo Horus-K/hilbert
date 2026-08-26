@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { ProxyAgent, fetch: proxyFetch } = require('undici');
 const config = require('../config');
 const { sanitizeGoogleAuth } = require('../utils/user-identity');
+const sessionRegistry = require('./session-registry.service');
 
 const GOOGLE_CONFIG = config.google;
 const DEBUG_CONFIG = config.debug || { enabled: false, user: {} };
@@ -126,24 +127,50 @@ function checkLoginPermission(userEmail) {
 /**
  * 签发 JWT 令牌
  */
-function signJwt(user) {
+function signJwt(user, options = {}) {
   const payload = {
-    sub: user.id,
+    sub: user.id || user.sub,
     email: user.email,
     name: user.name,
     displayName: user.displayName || user.name || user.email,
     groups: Array.isArray(user.groups) ? user.groups : (user.groups ? [user.groups] : []),
     picture: user.picture
   };
+  if (options.sessionId) payload.sid = options.sessionId;
   // Google userinfo 的原始资料仅写入签名 JWT，按页面配置决定是否继续透传给下游。
-  if (user && user.id) payload.googleAuth = sanitizeGoogleAuth(user.googleAuth || user);
+  if (user && (user.id || user.sub)) payload.googleAuth = sanitizeGoogleAuth(user.googleAuth || user);
   if (user && user.googleAccessToken) {
     payload.googleAccessToken = user.googleAccessToken;
     payload.googleAccessTokenExpiresAt = user.googleAccessTokenExpiresAt || null;
   }
   return jwt.sign(payload, GOOGLE_CONFIG.jwt_secret, {
-    expiresIn: GOOGLE_CONFIG.jwt_expire_hours + 'h'
+    expiresIn: options.expiresIn || (GOOGLE_CONFIG.jwt_expire_hours + 'h')
   });
+}
+
+
+function requestSessionMetadata(req) {
+  return {
+    ip: String(req && req.headers && req.headers['x-forwarded-for'] || req && req.socket && req.socket.remoteAddress || '').split(',')[0].trim() || null,
+    userAgent: req && req.headers ? (req.headers['user-agent'] || null) : null
+  };
+}
+
+function issueMainSession(user, req, options = {}) {
+  const configuredExpiry = Date.now() + GOOGLE_CONFIG.jwt_expire_hours * 60 * 60 * 1000;
+  const expiresAt = options.expiresAt ? Math.min(Number(options.expiresAt), configuredExpiry) : configuredExpiry;
+  const metadata = requestSessionMetadata(req);
+  const session = sessionRegistry.createSession({
+    id: options.sessionId,
+    type: 'main',
+    email: user.email,
+    displayName: user.displayName || user.name || user.email,
+    expiresAt,
+    ...metadata
+  });
+  const expiresIn = Math.max(1, Math.floor((expiresAt - Date.now()) / 1000));
+  const token = signJwt(user, { sessionId: session.id, expiresIn });
+  return { token, session };
 }
 
 function isDebugModeEnabled() {
@@ -177,6 +204,8 @@ module.exports = {
   fetchUserInfo,
   checkLoginPermission,
   signJwt,
+  issueMainSession,
+  requestSessionMetadata,
   isDebugModeEnabled,
   getDebugUser,
   GOOGLE_CONFIG,

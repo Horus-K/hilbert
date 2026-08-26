@@ -1,3 +1,12 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const testDataDir = path.join(os.tmpdir(), 'hilbert-core-' + process.pid);
+fs.rmSync(testDataDir, { recursive: true, force: true });
+process.env.HILBERT_DATA_DIR = testDataDir;
+process.env.DATA_ENCRYPTION_KEY = 'test-data-encryption-key-core';
+process.on('exit', () => fs.rmSync(testDataDir, { recursive: true, force: true }));
+
 process.env.PAGE_PROXY = '';
 process.env.PORT = '3000';
 process.env.EXTERNAL_PROXY_PORT = '3001';

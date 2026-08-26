@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { external_proxy: proxyConfig, google: googleConfig } = require('../config');
 const { requestProtocol } = require('../utils/proxy-origin');
 const { sanitizeGoogleAuth } = require('../utils/user-identity');
+const sessionRegistry = require('./session-registry.service');
 
 const PROXY_SESSION_COOKIE = 'hilbert_proxy_session';
 const TICKET_BYTES = 32;
@@ -17,7 +18,8 @@ function copyProxyUser(user) {
     name: source.name,
     displayName: source.displayName,
     groups: Array.isArray(source.groups) ? source.groups : (source.groups ? [source.groups] : []),
-    picture: source.picture
+    picture: source.picture,
+    mainSessionId: source.mainSessionId || source.sid || null
   };
   const mainSessionExpiresAt = Number(source.mainSessionExpiresAt) ||
     (Number.isFinite(Number(source.exp)) ? Number(source.exp) * 1000 : 0);
@@ -82,7 +84,7 @@ function consumeProxyTicket(ticket, expectedPageId) {
   return payload;
 }
 
-function signProxySession(pageId, user) {
+function signProxySession(pageId, user, metadata = {}) {
   const proxyUser = copyProxyUser(user);
   let expiresIn = proxyConfig.session_ttl_minutes * 60;
   if (proxyUser.mainSessionExpiresAt) {
@@ -90,15 +92,27 @@ function signProxySession(pageId, user) {
     if (remaining <= 0) throw new Error('主站会话已过期');
     expiresIn = Math.min(expiresIn, remaining);
   }
-  return jwt.sign({
+  const session = sessionRegistry.createSession({
+    type: 'proxy',
+    email: proxyUser.email,
+    displayName: proxyUser.displayName || proxyUser.name || proxyUser.email,
+    pageId,
+    parentSessionId: proxyUser.mainSessionId,
+    expiresAt: Date.now() + expiresIn * 1000,
+    ip: metadata.ip || null,
+    userAgent: metadata.userAgent || null
+  });
+  const token = jwt.sign({
     type: 'proxy-session',
     pageId,
+    sid: session.id,
     user: proxyUser
   }, googleConfig.jwt_secret, {
     audience: 'hilbert-page-proxy',
     subject: String(proxyUser.sub || proxyUser.email || ''),
     expiresIn
   });
+  return { token, session };
 }
 
 function verifyProxySession(token, expectedPageId) {
@@ -107,10 +121,10 @@ function verifyProxySession(token, expectedPageId) {
     const payload = jwt.verify(token, googleConfig.jwt_secret, {
       audience: 'hilbert-page-proxy'
     });
-    if (payload.type !== 'proxy-session' || payload.pageId !== expectedPageId || !payload.user) {
-      return null;
-    }
-    return payload.user;
+    if (payload.type !== 'proxy-session' || payload.pageId !== expectedPageId || !payload.user) return null;
+    if (payload.sid && !sessionRegistry.isActive(payload.sid)) return null;
+    if (payload.sid) sessionRegistry.touch(payload.sid);
+    return { ...payload.user, sid: payload.sid || null };
   } catch {
     return null;
   }

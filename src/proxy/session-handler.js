@@ -6,6 +6,7 @@ const {
   signProxySession
 } = require('../services/proxy-session.service');
 const { extractPageIdFromHost } = require('../utils/proxy-origin');
+const audit = require('../services/audit.service');
 
 function handleProxySessionExchange(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -23,13 +24,25 @@ function handleProxySessionExchange(req, res) {
     return res.status(403).send('没有查看该页面的权限');
   }
 
-  let sessionToken;
+  let issued;
   try {
-    sessionToken = signProxySession(page.id, payload.user);
+    issued = signProxySession(page.id, payload.user, {
+      ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
+      userAgent: req.headers['user-agent'] || null
+    });
+
   } catch {
     return res.status(401).send('主站会话已过期，请重新打开页面');
   }
-  setProxySessionCookie(req, res, sessionToken);
+  setProxySessionCookie(req, res, issued.token);
+  audit.record({
+    req,
+    actor: payload.user.email,
+    sessionId: issued.session.id,
+    action: 'proxy.session.create',
+    resourceType: 'page',
+    resourceId: page.id
+  });
   return res.redirect(302, payload.nextPath);
 }
 

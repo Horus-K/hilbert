@@ -3,6 +3,12 @@ const EventEmitter = require('events');
 const { DATA_DIR, DATA_FILE, DEFAULT_PAGES, external_proxy: externalProxyConfig } = require('../config');
 const { normalizeAuth } = require('../utils/validators');
 const { atomicWriteJson, readJsonFile } = require('../utils/json-file');
+const {
+  decryptPageSecrets,
+  encryptPageSecrets,
+  hasPlaintextPageSecrets,
+  needsPageSecretMigration
+} = require('../utils/page-secret-store');
 
 const events = new EventEmitter();
 let cache = null;
@@ -14,15 +20,37 @@ function ensureDataFile() {
   }
 }
 
+function migrateSecretsIfNeeded(rawPages, plainPages) {
+  if (needsPageSecretMigration(rawPages)) {
+    atomicWriteJson(DATA_FILE, encryptPageSecrets(plainPages), { backup: false });
+    console.warn('页面认证 Secret 已迁移为静态加密格式');
+  }
+
+  const backupPath = DATA_FILE + '.bak';
+  if (!fs.existsSync(backupPath)) return;
+  try {
+    const rawBackup = readJsonFile(backupPath, { validate: Array.isArray });
+    if (needsPageSecretMigration(rawBackup)) {
+      const plainBackup = decryptPageSecrets(rawBackup);
+      atomicWriteJson(backupPath, encryptPageSecrets(plainBackup), { backup: false });
+    }
+  } catch (error) {
+    if (error.code && error.code.startsWith('SECRET_')) throw error;
+    console.error('页面配置备份 Secret 迁移失败:', error.message);
+  }
+}
+
 /**
- * 读取全部页面配置（带内存缓存）。主文件损坏时自动从 .bak 恢复。
+ * 运行时缓存始终是解密后的对象，磁盘 pages.json 和 .bak 始终写入密文。
  */
 function read() {
   if (cache) return cache;
   ensureDataFile();
   try {
-    const pages = readJsonFile(DATA_FILE, { validate: Array.isArray });
-    cache = pages.map(p => {
+    const rawPages = readJsonFile(DATA_FILE, { validate: Array.isArray });
+    const plainPages = decryptPageSecrets(rawPages);
+    migrateSecretsIfNeeded(rawPages, plainPages);
+    cache = plainPages.map(p => {
       const page = { type: 'link', ...p };
       if (page.type === 'link') {
         page.proxyMode = externalProxyConfig.public_host_template ? 'host' : 'mount';
@@ -36,6 +64,7 @@ function read() {
     });
     return cache;
   } catch (err) {
+    if (err.code && err.code.startsWith('SECRET_')) throw err;
     console.error('读取页面配置失败，返回默认配置:', err.message);
     return DEFAULT_PAGES;
   }
@@ -43,7 +72,7 @@ function read() {
 
 function write(pages) {
   ensureDataFile();
-  atomicWriteJson(DATA_FILE, pages);
+  atomicWriteJson(DATA_FILE, encryptPageSecrets(pages));
   cache = pages;
   events.emit('pages:changed');
 }

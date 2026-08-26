@@ -54,13 +54,12 @@ function migrateInlineMarkdown() {
   const pagesRepo = require('../repositories/pages.repository');
   const pages = pagesRepo.read();
   let changed = false;
-  for (const p of pages) {
-    if (p.type === 'markdown' && p.content && !isContentPath(p.content)) {
-      p.content = writeMdFile(p.id + '.md', p.content);
-      changed = true;
-    }
-  }
-  if (changed) pagesRepo.write(pages);
+  const nextPages = pages.map(page => {
+    if (page.type !== 'markdown' || !page.content || isContentPath(page.content)) return page;
+    changed = true;
+    return { ...page, content: writeMdFile(page.id + '.md', page.content) };
+  });
+  if (changed) pagesRepo.write(nextPages);
 }
 
 module.exports = { isContentPath, mdFilePath, writeMdFile, deleteMdFile, resolvePage, migrateInlineMarkdown };

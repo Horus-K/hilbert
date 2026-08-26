@@ -154,7 +154,8 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
     type: 'link',
     name: 'Host page A',
     url: `http://127.0.0.1:${upstream.address().port}/base/page?initial=1`,
-    proxyMode: 'mount'
+    proxyMode: 'mount',
+    auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer must-not-leak' }
   };
   const pageB = {
     id: 'host-page-b',
@@ -178,6 +179,18 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
 
   try {
     assert.equal(findRouteByHost('host-page-a.proxy.local.horus-k.com').page.id, pageA.id);
+
+    const listResponse = await request(mainServer, {
+      path: '/hilbert-api/pages',
+      host: 'hilbert.local.horus-k.com',
+      cookie: mainCookie
+    });
+    assert.equal(listResponse.status, 200);
+    const publicPage = JSON.parse(listResponse.body).find(page => page.id === pageA.id);
+    assert.equal(publicPage.auth.mode, 'header');
+    assert.equal(publicPage.auth.hasHeaderValue, true);
+    assert.equal(publicPage.auth.headerValue, undefined);
+    assert.doesNotMatch(listResponse.body, /must-not-leak/);
 
     const openResponse = await request(mainServer, {
       path: '/hilbert-api/pages/host-page-a/open',

@@ -30,4 +30,8 @@ function setAll(email, pageIds) {
   return pageIds;
 }
 
-module.exports = { getAll, toggle, setAll };
+function removePageFromAll(pageId) {
+  return favoritesRepo.removePageFromAll(pageId);
+}
+
+module.exports = { getAll, toggle, setAll, removePageFromAll };

@@ -26,6 +26,7 @@ const pagesRepo = require('../src/repositories/pages.repository');
 const { findRouteByPath, pathsOverlap, refreshProxyRoutes } = require('../src/proxy/route-manager');
 const { rewriteCss, rewriteHtml } = require('../src/proxy/rewriter');
 const { normalizeAuth } = require('../src/utils/validators');
+const { sanitizeGoogleAuth } = require('../src/utils/user-identity');
 
 test('挂载 URL 完整镜像上游 pathname，保留相对路径语义', () => {
   const page = { url: 'https://example.test/base/app/?fixed=1' };
@@ -185,6 +186,62 @@ test('认证配置支持通用 claim 映射和状态码策略', () => {
   assert.equal(login.loginPath, 'session');
   assert.deepEqual(login.loginSuccessStatuses, [200, 302]);
   assert.deepEqual(login.expiredStatuses, [401, 419]);
+});
+
+test('身份透传开关映射 Google 资料并拒绝过期 access_token', async () => {
+  const identity = normalizeAuth({
+    mode: 'identity',
+    forwardGoogleAuth: true,
+    forwardGoogleAccessToken: true
+  });
+  assert.equal(identity.forwardGoogleAuth, true);
+  assert.equal(identity.forwardGoogleAccessToken, true);
+  assert.ok(identity.claims.some(mapping =>
+    mapping.claim === 'googleAuth' && mapping.header === 'X-Forwarded-Google-Auth'));
+  assert.ok(identity.claims.some(mapping =>
+    mapping.claim === 'googleAccessToken' && mapping.header === 'X-Forwarded-Google-Access-Token'));
+
+  const profile = sanitizeGoogleAuth({
+    id: 'google-user',
+    email: 'user@example.test',
+    googleAccessToken: 'must-not-leak',
+    nested: { refresh_token: 'must-not-leak', locale: 'zh-CN' }
+  });
+  assert.equal(profile.googleAccessToken, undefined);
+  assert.equal(profile.nested.refresh_token, undefined);
+  assert.equal(profile.nested.locale, 'zh-CN');
+
+  const page = { id: 'identity-page', auth: identity };
+  const validHeaders = {};
+  await applyAuthHeaders(page, validHeaders, {
+    sub: 'user-id',
+    email: 'user@example.test',
+    displayName: 'Test User',
+    groups: ['ops'],
+    googleAuth: {
+      id: 'google-user',
+      email: 'user@example.test',
+      googleAccessToken: 'must-not-leak'
+    },
+    googleAccessToken: 'valid-access-token',
+    googleAccessTokenExpiresAt: Date.now() + 60_000
+  }, new URL('https://example.test/'));
+  const forwardedProfile = JSON.parse(Buffer.from(
+    validHeaders['x-forwarded-google-auth'], 'base64url'
+  ).toString('utf8'));
+  assert.equal(forwardedProfile.email, 'user@example.test');
+  assert.equal(forwardedProfile.googleAccessToken, undefined);
+  assert.equal(validHeaders['x-forwarded-google-access-token'], 'valid-access-token');
+
+  const expiredHeaders = {};
+  await applyAuthHeaders(page, expiredHeaders, {
+    sub: 'user-id',
+    email: 'user@example.test',
+    googleAuth: { id: 'google-user' },
+    googleAccessToken: 'expired-access-token',
+    googleAccessTokenExpiresAt: Date.now() - 1
+  }, new URL('https://example.test/'));
+  assert.equal(expiredHeaders['x-forwarded-google-access-token'], undefined);
 });
 
 test('HTTP 集成：主站 Cookie 不出站，目标 Cookie 留在服务端且内容按标准 URL 重写', async () => {

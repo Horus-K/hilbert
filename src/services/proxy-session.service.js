@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { external_proxy: proxyConfig, google: googleConfig } = require('../config');
 const { requestProtocol } = require('../utils/proxy-origin');
+const { sanitizeGoogleAuth } = require('../utils/user-identity');
 
 const PROXY_SESSION_COOKIE = 'hilbert_proxy_session';
 const TICKET_BYTES = 32;
@@ -21,7 +22,7 @@ function copyProxyUser(user) {
   const mainSessionExpiresAt = Number(source.mainSessionExpiresAt) ||
     (Number.isFinite(Number(source.exp)) ? Number(source.exp) * 1000 : 0);
   if (mainSessionExpiresAt) result.mainSessionExpiresAt = mainSessionExpiresAt;
-  if (source.googleAuth) result.googleAuth = source.googleAuth;
+  if (source.googleAuth) result.googleAuth = sanitizeGoogleAuth(source.googleAuth);
   if (source.googleAccessToken) {
     result.googleAccessToken = source.googleAccessToken;
     result.googleAccessTokenExpiresAt = source.googleAccessTokenExpiresAt || null;

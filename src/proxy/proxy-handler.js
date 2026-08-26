@@ -148,9 +148,9 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
           const textEncodingSupported = ['utf-8', 'utf8', 'us-ascii', 'ascii'].includes(charset);
           const isHtml = /text\/html|application\/xhtml\+xml/.test(contentType);
           const isCss = /text\/css/.test(contentType);
-          const rewrite = textEncodingSupported && isHtml
+          const rewrite = proxyRes.statusCode < 400 && textEncodingSupported && isHtml
             ? rewriteHtml
-            : textEncodingSupported && isCss
+            : proxyRes.statusCode < 400 && textEncodingSupported && isCss
               ? rewriteCss
               : null;
 

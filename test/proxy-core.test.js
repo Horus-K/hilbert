@@ -269,6 +269,11 @@ test('HTTP 集成：主站 Cookie 不出站，目标 Cookie 留在服务端且�
       res.end('<a href="/root">root</a><script src="asset.js"></script>');
       return;
     }
+    if (req.url === '/base/unavailable') {
+      res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<main>upstream unavailable <a href="/status">status</a></main>');
+      return;
+    }
     if (req.url === '/base/asset.js') {
       const source = Buffer.from('window.proxyCompressionTest = true;');
       const accepts = String(req.headers['accept-encoding'] || '');
@@ -317,6 +322,13 @@ test('HTTP 集成：主站 Cookie 不出站，目标 Cookie 留在服务端且�
     assert.match(html, /href="\/mount\/root"/);
     assert.match(html, /src="asset\.js"/);
     assert.equal(upstreamRequests[0].cookie, undefined);
+
+    const unavailableResponse = await fetch(proxyOrigin + '/mount/base/unavailable');
+    assert.equal(unavailableResponse.status, 503);
+    assert.equal(
+      await unavailableResponse.text(),
+      '<main>upstream unavailable <a href="/status">status</a></main>'
+    );
 
     const apiResponse = await fetch(proxyOrigin + '/mount/base/api', {
       headers: { cookie: 'hilbert_token=must-not-leak', origin: proxyOrigin }

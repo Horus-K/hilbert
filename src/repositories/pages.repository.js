@@ -1,6 +1,6 @@
 const fs = require('fs');
 const EventEmitter = require('events');
-const { DATA_DIR, DATA_FILE, DEFAULT_PAGES } = require('../config');
+const { DATA_DIR, DATA_FILE, DEFAULT_PAGES, external_proxy: externalProxyConfig } = require('../config');
 const { normalizeAuth } = require('../utils/validators');
 
 const events = new EventEmitter();
@@ -29,7 +29,10 @@ function read() {
     const pages = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     cache = pages.map(p => {
       const page = { type: 'link', ...p };
-      if (page.type === 'link') page.proxyMode = 'mount';
+      if (page.type === 'link') {
+        page.proxyMode = externalProxyConfig.public_host_template ? 'host' : 'mount';
+        if (externalProxyConfig.public_host_template) delete page.mountPath;
+      }
       if (page.auth) {
         const normalized = normalizeAuth(page.auth);
         if (normalized !== undefined) page.auth = normalized;

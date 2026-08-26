@@ -16,6 +16,7 @@ let rbacAssignments = [];     // RBAC 分配列表
 let editingRoleId = null;     // 当前编辑的角色 ID（null 为新建）
 let favorites = [];           // 当前用户收藏的页面 ID 列表
 let currentUserEmail = '';    // 当前用户邮箱（用于 localStorage 隔离）
+let proxyRoutingMode = 'mount'; // host = 逐页面子域名；mount = 旧版共享 origin 挂载路径
 let collapsedGroups = [];     // 已折叠的分组名列表（默认全部折叠）
 let viewingPageDoc = false;   // 是否正在查看页面专属文档
 let docPageId = null;         // 当前查看文档的页面 ID
@@ -596,7 +597,9 @@ function activateTab(tabId, historyMode = null) {
               'allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-modals',
               'allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox'
             ].join(' '));
-            iframe.src = page.proxyOrigin + mountPath + upstreamPath + (pageUrl.search || '');
+            iframe.src = page.proxyUrl || (
+              page.proxyOrigin + mountPath + upstreamPath + (pageUrl.search || '')
+            );
           }
         }
       }
@@ -750,8 +753,8 @@ async function duplicatePage(page) {
   };
   if (page.type === 'link') {
     body.url = page.url;
-    body.proxyMode = 'mount';
-    if (page.mountPath) body.mountPath = page.mountPath;
+    body.proxyMode = proxyRoutingMode;
+    if (proxyRoutingMode === 'mount' && page.mountPath) body.mountPath = page.mountPath;
     if (page.auth) body.auth = page.auth;
   } else if (page.type === 'direct' || page.type === 'iframe') {
     body.url = page.url;
@@ -1625,7 +1628,7 @@ function setType(type) {
   // 直链和直接嵌入只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
   $('proxyModeField').classList.add('hidden');
-  $('mountPathField').classList.toggle('hidden', !isLink);
+  $('mountPathField').classList.toggle('hidden', !isLink || proxyRoutingMode === 'host');
   $('authField').classList.toggle('hidden', !isLink);
   $('customFileField').classList.toggle('hidden', type !== 'custom');
   $('fieldUrl').required = needUrl;
@@ -1674,13 +1677,15 @@ function fillGroupSelect(selected) {
 
 function updateProxyModeHint() {
   const hint = $('proxyModeHint');
-  hint.textContent = '所有外部页面均通过隔离 origin 下的独立挂载路径访问';
+  hint.textContent = proxyRoutingMode === 'host'
+    ? '每个外部页面使用独立通配子域名，公开路径完整镜像上游路径'
+    : '所有外部页面均通过隔离 origin 下的独立挂载路径访问';
   hint.classList.remove('warn');
 }
 $('fieldUrl').addEventListener('input', updateProxyModeHint);
 $('fieldProxyMode').addEventListener('change', () => {
   updateProxyModeHint();
-  $('mountPathField').classList.remove('hidden');
+  $('mountPathField').classList.toggle('hidden', proxyRoutingMode === 'host');
 });
 
 function openModal(page = null) {
@@ -1747,8 +1752,8 @@ $('pageForm').addEventListener('submit', async e => {
   };
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();
-    body.proxyMode = 'mount';
-    body.mountPath = $('fieldMountPath').value.trim();
+    body.proxyMode = proxyRoutingMode;
+    if (proxyRoutingMode === 'mount') body.mountPath = $('fieldMountPath').value.trim();
     // 始终传递 resolveIp（空字符串时后端会删除该字段）
     body.resolveIp = $('fieldResolveIp').value.trim();
     // 认证配置：勾选时按所选模式提交，未勾选时显式清除
@@ -2109,6 +2114,7 @@ async function init() {
         userGroups.classList.add('hidden');
       }
       isAdmin = !!me.isAdmin;
+      proxyRoutingMode = me.proxyRoutingMode === 'host' ? 'host' : 'mount';
       currentUserEmail = me.email || '';
       await loadFavorites();
     }
@@ -2123,6 +2129,8 @@ async function init() {
 
   try {
     [pages, groups] = await Promise.all([api(''), groupsApi()]);
+    const proxyPage = pages.find(page => page.type === 'link' && page.proxyRoutingMode);
+    if (proxyPage) proxyRoutingMode = proxyPage.proxyRoutingMode;
   } catch (err) {
     showToast('加载失败：' + err.message);
     return;

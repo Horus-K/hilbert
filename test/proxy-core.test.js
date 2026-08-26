@@ -1,4 +1,10 @@
 process.env.PAGE_PROXY = '';
+process.env.PORT = '3000';
+process.env.EXTERNAL_PROXY_PORT = '3001';
+process.env.EXTERNAL_PROXY_PUBLIC_PORT = '3001';
+process.env.EXTERNAL_PROXY_PUBLIC_ORIGIN = '';
+process.env.EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE = '';
+process.env.EXTERNAL_PROXY_PUBLIC_PROTOCOL = '';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

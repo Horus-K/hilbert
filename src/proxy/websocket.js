@@ -8,17 +8,16 @@ const { buildUpstreamHeaders } = require('./header-utils');
 const { resolveProxyTarget } = require('./proxy-handler');
 const { resolveProxyRequest } = require('./route-manager');
 const { GOOGLE_CONFIG } = require('../services/auth.service');
+const { extractProxySession } = require('../services/proxy-session.service');
 const { hasPermission } = require('../services/rbac.service');
+const { extractPageIdFromHost, isHostRoutingEnabled } = require('../utils/proxy-origin');
 
 function rejectUpgrade(socket, statusCode, statusText) {
   socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
 }
 
-/**
- * upgrade 事件不经过 Express 中间件，从 Cookie 解析当前登录用户（失败视为匿名）
- */
-function extractUser(req) {
+function extractMainUser(req) {
   const tokenMatch = (req.headers.cookie || '').match(/(?:^|;\s*)hilbert_token=([^;]+)/);
   if (!tokenMatch) return null;
   try {
@@ -28,15 +27,34 @@ function extractUser(req) {
   }
 }
 
+function resolveUpgradeContext(req) {
+  if (isHostRoutingEnabled()) {
+    const pageId = extractPageIdFromHost(req.headers.host);
+    if (!pageId) return { statusCode: 404, statusText: 'Not Found' };
+    const user = extractProxySession(req, pageId);
+    if (!user) return { statusCode: 401, statusText: 'Unauthorized' };
+    const found = resolveProxyRequest(req);
+    if (!found || found.page.id !== pageId) return { statusCode: 404, statusText: 'Not Found' };
+    return { found, user };
+  }
+
+  const user = extractMainUser(req);
+  if (!user) return { statusCode: 401, statusText: 'Unauthorized' };
+  const found = resolveProxyRequest(req, user);
+  if (!found) return { statusCode: 404, statusText: 'Not Found' };
+  return { found, user };
+}
+
 /**
- * 设置 WebSocket upgrade 转发
+ * 设置 WebSocket upgrade 转发。Host 路由与 HTTP 使用同一页面识别和页面会话。
  */
 function setupWebSocket(server) {
   server.on('upgrade', async (req, socket, head) => {
-    const user = extractUser(req);
-    if (!user) return rejectUpgrade(socket, 401, 'Unauthorized');
-    const found = resolveProxyRequest(req, user);
-    if (!found || found.page.type !== 'link') return rejectUpgrade(socket, 404, 'Not Found');
+    const context = resolveUpgradeContext(req);
+    if (!context.found) return rejectUpgrade(socket, context.statusCode, context.statusText);
+
+    const { found, user } = context;
+    if (found.page.type !== 'link') return rejectUpgrade(socket, 404, 'Not Found');
     const { page, mountPrefix } = found;
     if (!hasPermission(user.email, page.id, 'read')) {
       return rejectUpgrade(socket, 403, 'Forbidden');
@@ -84,4 +102,4 @@ function setupWebSocket(server) {
   });
 }
 
-module.exports = { setupWebSocket };
+module.exports = { extractMainUser, resolveUpgradeContext, setupWebSocket };

@@ -4,13 +4,37 @@ const { hasPermission, isAdmin } = require('../services/rbac.service');
 const pagesService = require('../services/pages.service');
 const customPagesService = require('../services/custom-pages.service');
 const { AppError } = require('../utils/errors');
-const { exposeProxyOrigin } = require('../utils/proxy-origin');
+const {
+  buildProxySessionExchangeUrl,
+  exposeProxyOrigin,
+  getLegacyPageProxyUrl,
+  getPageEntryPath,
+  isHostRoutingEnabled
+} = require('../utils/proxy-origin');
+const { issueProxyTicket } = require('../services/proxy-session.service');
 
 // 获取全部页面（按权限过滤）
 router.get('/', (req, res) => {
   const email = req.user.email;
   const pages = pagesService.getAllPages(email, isAdmin, hasPermission);
   res.json(pages.map(page => exposeProxyOrigin(page, req)));
+});
+
+// 进入外部代理页面：主站认证后签发一次性票据，再跳转到页面专属 Host 换取独立会话。
+router.get('/:id/open', (req, res) => {
+  if (!hasPermission(req.user.email, req.params.id, 'read')) {
+    throw new AppError('没有查看该页面的权限', 403);
+  }
+  const page = pagesService.getPageById(req.params.id);
+  if (page.type !== 'link') throw new AppError('该页面不是外部代理页面');
+
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isHostRoutingEnabled()) {
+    return res.redirect(302, getLegacyPageProxyUrl(page, req));
+  }
+
+  const ticket = issueProxyTicket(page, req.user, getPageEntryPath(page));
+  return res.redirect(302, buildProxySessionExchangeUrl(page, req, ticket));
 });
 
 // 新增页面

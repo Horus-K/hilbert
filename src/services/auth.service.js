@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { ProxyAgent, fetch: proxyFetch } = require('undici');
 const config = require('../config');
+const { sanitizeGoogleAuth } = require('../utils/user-identity');
 
 const GOOGLE_CONFIG = config.google;
 const DEBUG_CONFIG = config.debug || { enabled: false, user: {} };
@@ -135,7 +136,7 @@ function signJwt(user) {
     picture: user.picture
   };
   // Google userinfo 的原始资料仅写入签名 JWT，按页面配置决定是否继续透传给下游。
-  if (user && user.id) payload.googleAuth = user.googleAuth || user;
+  if (user && user.id) payload.googleAuth = sanitizeGoogleAuth(user.googleAuth || user);
   if (user && user.googleAccessToken) {
     payload.googleAccessToken = user.googleAccessToken;
     payload.googleAccessTokenExpiresAt = user.googleAccessTokenExpiresAt || null;

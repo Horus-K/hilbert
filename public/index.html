@@ -265,6 +265,14 @@
               <input type="text" id="authEmailHeader" placeholder="邮箱请求头名（默认 X-Forwarded-Mail）" autocomplete="off" />
               <input type="text" id="authDisplayNameHeader" placeholder="显示名请求头名（默认 X-Forwarded-DisplayName）" autocomplete="off" />
               <input type="text" id="authGroupsHeader" placeholder="用户组请求头名（默认 X-Forwarded-Groups）" autocomplete="off" />
+              <label class="checkbox-label">
+                <input type="checkbox" id="authForwardGoogleAuth" />
+                透传完整 Google 用户资料（不包含 OAuth Token）
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="authForwardGoogleAccessToken" />
+                透传 Google access_token（高风险，不包含 refresh_token）
+              </label>
               <p class="form-hint">将当前登录用户的邮箱、显示名和用户组透传给目标站，要求目标站只能通过本服务访问（防伪造）</p>
             </div>
             <div class="hidden" id="authOAuthFields">

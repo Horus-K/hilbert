@@ -26,7 +26,9 @@ function normalizeAuth(auth) {
       displayNameHeader: 'X-Forwarded-DisplayName',
       groupsHeader: 'X-Forwarded-Groups',
       idHeader: 'X-Forwarded-User-Id',
-      pictureHeader: 'X-Forwarded-User-Picture'
+      pictureHeader: 'X-Forwarded-User-Picture',
+      googleAuthHeader: 'X-Forwarded-Google-Auth',
+      googleAccessTokenHeader: 'X-Forwarded-Google-Access-Token'
     };
     const normalized = { mode };
     for (const [key, fallback] of Object.entries(defaults)) {
@@ -34,6 +36,9 @@ function normalizeAuth(auth) {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName)) return undefined;
       normalized[key] = headerName;
     }
+
+    normalized.forwardGoogleAuth = auth.forwardGoogleAuth === true;
+    normalized.forwardGoogleAccessToken = auth.forwardGoogleAccessToken === true;
     const defaultClaims = [
       { claim: 'email', header: normalized.userHeader },
       { claim: 'email', header: normalized.emailHeader },
@@ -42,7 +47,23 @@ function normalizeAuth(auth) {
       { claim: 'sub', fallbackClaim: 'id', header: normalized.idHeader },
       { claim: 'picture', header: normalized.pictureHeader }
     ];
-    const claims = Array.isArray(auth.claims) ? auth.claims : defaultClaims;
+    const claims = Array.isArray(auth.claims) ? [...auth.claims] : defaultClaims;
+    if (normalized.forwardGoogleAuth && !claims.some(mapping => mapping && mapping.claim === 'googleAuth')) {
+      claims.push({
+        claim: 'googleAuth',
+        header: normalized.googleAuthHeader,
+        format: 'base64url'
+      });
+    }
+    if (normalized.forwardGoogleAccessToken &&
+        !claims.some(mapping => mapping && mapping.claim === 'googleAccessToken')) {
+      claims.push({
+        claim: 'googleAccessToken',
+        header: normalized.googleAccessTokenHeader,
+        format: 'text'
+      });
+    }
+
     normalized.claims = [];
     for (const mapping of claims) {
       const header = String(mapping && mapping.header || '').trim();

@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const { applyDnsOverride, getPageRequestAgent } = require('./agents');
 const { clearCookieJar, getCookieHeader, storeResponseCookies, userKey } = require('./cookie-jar');
+const { sanitizeGoogleAuth } = require('../utils/user-identity');
 
 // login 模式的会话状态：页面与当前 Hilbert 用户相互隔离。
 const loginSessions = new Map();
@@ -168,6 +169,12 @@ async function applyAuthHeaders(page, headers, user, targetUrl) {
     for (const mapping of auth.claims || []) {
       let value = getClaim(user, mapping.claim);
       if (value === undefined && mapping.fallbackClaim) value = getClaim(user, mapping.fallbackClaim);
+      if (mapping.claim === 'googleAuth' && value) value = sanitizeGoogleAuth(value);
+      if (mapping.claim === 'googleAccessToken') {
+        const expired = user && user.googleAccessTokenExpiresAt &&
+          Number(user.googleAccessTokenExpiresAt) <= Date.now();
+        if (expired) continue;
+      }
       if (value !== undefined && value !== null && value !== '') {
         headers[mapping.header.toLowerCase()] = toHeaderValue(formatClaim(value, mapping.format));
       }

@@ -3,10 +3,13 @@ const path = require('path');
 const { PAGE_TYPES, external_proxy: externalProxyConfig } = require('../config');
 const { AppError } = require('../utils/errors');
 const { isValidUrl, normalizeAuth, normalizeMountPath } = require('../utils/validators');
+const { mergeAuthSecrets } = require('../utils/auth-secrets');
 const pagesRepo = require('../repositories/pages.repository');
 const markdownSvc = require('./markdown.service');
 const customPagesSvc = require('./custom-pages.service');
 const pageDocsSvc = require('./page-docs.service');
+const rbacSvc = require('./rbac.service');
+const favoritesSvc = require('./favorites.service');
 
 const hostRoutingEnabled = Boolean(externalProxyConfig.public_host_template);
 
@@ -39,7 +42,7 @@ function getPageById(id) {
 /**
  * 创建页面
  */
-function createPage(data) {
+function createPage(data = {}) {
   const { type = 'link', name, url, icon, group, content, auth, mountPath, resolveIp, sourceId } = data;
 
   if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
@@ -70,7 +73,13 @@ function createPage(data) {
         }
       }
       if (resolveIp) page.resolveIp = resolveIp.trim();
-      const normalized = normalizeAuth(auth);
+      let authInput = auth;
+      if (authInput === undefined && sourceId) {
+        const sourcePage = pages.find(candidate => candidate.id === sourceId && candidate.type === 'link');
+        if (!sourcePage) throw new AppError('源页面不存在或类型不匹配', 404);
+        authInput = sourcePage.auth || null;
+      }
+      const normalized = normalizeAuth(authInput);
       if (normalized === undefined) throw new AppError('认证信息不完整');
       if (normalized) page.auth = normalized;
     }
@@ -85,20 +94,19 @@ function createPage(data) {
     page.content = markdownSvc.writeMdFile(page.id + '.md', text);
   }
 
-  pages.push(page);
-  pagesRepo.write(pages);
+  pagesRepo.write([...pages, page]);
   return markdownSvc.resolvePage(page);
 }
 
 /**
  * 更新页面
  */
-function updatePage(id, data) {
+function updatePage(id, data = {}) {
   const pages = pagesRepo.read();
   const idx = pages.findIndex(p => p.id === id);
   if (idx === -1) throw new AppError('页面不存在', 404);
 
-  const current = pages[idx];
+  const current = { ...pages[idx] };
   const { type, name, url, icon, group, content, auth, mountPath, resolveIp } = data;
 
   if (type !== undefined) {
@@ -128,7 +136,7 @@ function updatePage(id, data) {
     }
   }
   if (auth !== undefined) {
-    const normalized = normalizeAuth(auth);
+    const normalized = normalizeAuth(mergeAuthSecrets(current.auth, auth));
     if (normalized === undefined) throw new AppError('认证信息不完整');
     if (normalized) current.auth = normalized;
     else delete current.auth;
@@ -184,8 +192,9 @@ function updatePage(id, data) {
     }
   }
 
-  pages[idx] = current;
-  pagesRepo.write(pages);
+  const nextPages = [...pages];
+  nextPages[idx] = current;
+  pagesRepo.write(nextPages);
   return markdownSvc.resolvePage(current);
 }
 
@@ -197,11 +206,15 @@ function deletePage(id) {
   const idx = pages.findIndex(p => p.id === id);
   if (idx === -1) throw new AppError('页面不存在', 404);
 
-  const [removed] = pages.splice(idx, 1);
+  const removed = pages[idx];
+  const nextPages = pages.filter(page => page.id !== id);
+  // 先原子提交主页面数据，再清理可重试的关联项，避免写入失败时提前删除页面文件。
+  pagesRepo.write(nextPages);
+  rbacSvc.removePagePermissions(removed.id);
+  favoritesSvc.removePageFromAll(removed.id);
   markdownSvc.deleteMdFile(removed.content);
   pageDocsSvc.deletePageDoc(removed.id);
   customPagesSvc.deleteCustomPageDir(removed.id);
-  pagesRepo.write(pages);
   return removed;
 }
 
@@ -213,9 +226,11 @@ function togglePin(id) {
   const idx = pages.findIndex(p => p.id === id);
   if (idx === -1) throw new AppError('页面不存在', 404);
 
-  pages[idx].pinned = !pages[idx].pinned;
-  pagesRepo.write(pages);
-  return markdownSvc.resolvePage(pages[idx]);
+  const page = { ...pages[idx], pinned: !pages[idx].pinned };
+  const nextPages = [...pages];
+  nextPages[idx] = page;
+  pagesRepo.write(nextPages);
+  return markdownSvc.resolvePage(page);
 }
 
 module.exports = { getAllPages, getPageById, createPage, updatePage, deletePage, togglePin };

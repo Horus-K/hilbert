@@ -1,32 +1,52 @@
 const fs = require('fs');
 const path = require('path');
 const { FAVORITES_DIR } = require('../config');
+const { atomicWriteJson, readJsonFile } = require('../utils/json-file');
 
-/**
- * 获取用户收藏文件路径（邮箱安全化后作为文件名）
- */
 function favoritesFile(email) {
   return path.join(FAVORITES_DIR, email.replace(/[^a-zA-Z0-9@._-]/g, '_') + '.json');
 }
 
-/**
- * 读取用户收藏列表
- */
 function read(email) {
   const file = favoritesFile(email);
-  if (!fs.existsSync(file)) return [];
+  if (!fs.existsSync(file) && !fs.existsSync(file + '.bak')) return [];
   try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return Array.isArray(data) ? data : [];
-  } catch { return []; }
+    return readJsonFile(file, { validate: Array.isArray });
+  } catch (err) {
+    console.error(`读取收藏配置失败 (${email}):`, err.message);
+    return [];
+  }
 }
 
-/**
- * 写入用户收藏列表
- */
 function write(email, list) {
   if (!fs.existsSync(FAVORITES_DIR)) fs.mkdirSync(FAVORITES_DIR, { recursive: true });
-  fs.writeFileSync(favoritesFile(email), JSON.stringify(list, null, 2), 'utf8');
+  atomicWriteJson(favoritesFile(email), list);
 }
 
-module.exports = { read, write };
+function removePageFromList(list, pageId) {
+  return list.filter(id => id !== pageId);
+}
+
+function removePageFromAll(pageId) {
+  if (!fs.existsSync(FAVORITES_DIR)) return 0;
+  let changedFiles = 0;
+  for (const entry of fs.readdirSync(FAVORITES_DIR, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const file = path.join(FAVORITES_DIR, entry.name);
+    let list;
+    try {
+      list = readJsonFile(file, { validate: Array.isArray });
+    } catch (err) {
+      console.error(`清理收藏失败 (${entry.name}):`, err.message);
+      continue;
+    }
+    const next = removePageFromList(list, pageId);
+    if (next.length !== list.length) {
+      atomicWriteJson(file, next);
+      changedFiles += 1;
+    }
+  }
+  return changedFiles;
+}
+
+module.exports = { read, write, removePageFromAll, removePageFromList };

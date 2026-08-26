@@ -265,7 +265,9 @@ spec:
 | `data/pages/*.md` | Markdown 页面正文（每页一个文件） |
 | `data/custom-pages/<id>/` | 自定义页面静态资源目录 |
 
-> ⚠️ 认证账号密码以明文保存在 `pages.json` 中，请通过文件系统权限控制访问，不要将该文件提交到仓库或外发。
+> ⚠️ 认证账号密码仍以明文保存在 `pages.json` 中，请通过文件系统权限控制访问，不要将该文件提交到仓库或外发。页面 API 只返回 `hasPassword` / `hasClientSecret` 等状态，不会把 Secret 返回浏览器。
+
+所有 JSON Repository 使用“同目录临时文件 + fsync + rename”原子写入。每次覆盖前会将上一份合法 JSON 保存为同名 `.bak`；主文件损坏或缺失时会自动从备份恢复。备份文件与主文件包含相同敏感级别的数据，也必须使用相同的文件系统权限保护。
 
 ## API 一览
 

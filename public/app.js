@@ -755,7 +755,9 @@ async function duplicatePage(page) {
     body.url = page.url;
     body.proxyMode = proxyRoutingMode;
     if (proxyRoutingMode === 'mount' && page.mountPath) body.mountPath = page.mountPath;
-    if (page.auth) body.auth = page.auth;
+    if (page.auth && canEditPage(page.id)) {
+      body.sourceId = page.id; // 仅有源页面修改权限时由服务端复制认证 Secret
+    }
   } else if (page.type === 'direct' || page.type === 'iframe') {
     body.url = page.url;
   } else if (page.type === 'custom') {
@@ -1702,13 +1704,19 @@ function openModal(page = null) {
   const mode = hasAuth ? (page.auth.mode || 'basic') : 'basic';
   setAuthMode(mode);
   $('authUser').value = hasAuth ? (page.auth.username || '') : '';
-  $('authPass').value = hasAuth ? (page.auth.password || '') : '';
+  $('authPass').value = '';
+  $('authPass').placeholder = hasAuth && page.auth.hasPassword
+    ? '密码已配置，留空保持不变'
+    : '密码';
   $('authLoginPath').value = hasAuth && page.auth.loginPath !== '/login' ? page.auth.loginPath : '';
   $('authLoginFormat').value = hasAuth && page.auth.loginFormat === 'form' ? 'form' : 'json';
   $('authUserField').value = hasAuth && page.auth.userField !== 'user' ? (page.auth.userField || '') : '';
   $('authPasswordField').value = hasAuth && page.auth.passwordField !== 'password' ? (page.auth.passwordField || '') : '';
   $('authHeaderName').value = hasAuth ? (page.auth.headerName || '') : '';
-  $('authHeaderValue').value = hasAuth ? (page.auth.headerValue || '') : '';
+  $('authHeaderValue').value = '';
+  $('authHeaderValue').placeholder = hasAuth && page.auth.hasHeaderValue
+    ? '请求头值已配置，留空保持不变'
+    : '请求头值，如 Bearer xxx';
   $('authUserHeader').value = hasAuth && page.auth.userHeader !== 'X-Forwarded-User' ? (page.auth.userHeader || '') : '';
   $('authEmailHeader').value = hasAuth && page.auth.emailHeader !== 'X-Forwarded-Mail' ? (page.auth.emailHeader || '') : '';
   $('authDisplayNameHeader').value = hasAuth && page.auth.displayNameHeader !== 'X-Forwarded-DisplayName' ? (page.auth.displayNameHeader || '') : '';
@@ -1722,7 +1730,10 @@ function openModal(page = null) {
   );
   $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
   $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
-  $('authClientSecret').value = hasAuth ? (page.auth.clientSecret || '') : '';
+  $('authClientSecret').value = '';
+  $('authClientSecret').placeholder = hasAuth && page.auth.hasClientSecret
+    ? 'Client Secret 已配置，留空保持不变'
+    : 'Client Secret';
   $('authScope').value = hasAuth ? (page.auth.scope || '') : '';
   fillGroupSelect(page ? page.group : (groups[0] || '未分组'));
   setType(page ? page.type || 'link' : 'link');

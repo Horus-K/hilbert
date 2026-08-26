@@ -12,12 +12,17 @@ const {
   isHostRoutingEnabled
 } = require('../utils/proxy-origin');
 const { issueProxyTicket } = require('../services/proxy-session.service');
+const { toPublicPage } = require('../utils/page-response');
+
+function exposePublicPage(page, req) {
+  return exposeProxyOrigin(toPublicPage(page), req);
+}
 
 // 获取全部页面（按权限过滤）
 router.get('/', (req, res) => {
   const email = req.user.email;
   const pages = pagesService.getAllPages(email, isAdmin, hasPermission);
-  res.json(pages.map(page => exposeProxyOrigin(page, req)));
+  res.json(pages.map(page => exposePublicPage(page, req)));
 });
 
 // 进入外部代理页面：主站认证后签发一次性票据，再跳转到页面专属 Host 换取独立会话。
@@ -42,8 +47,17 @@ router.post('/', (req, res) => {
   if (!hasPermission(req.user.email, '*', 'create')) {
     throw new AppError('没有创建页面的权限', 403);
   }
+  if (req.body && req.body.sourceId) {
+    const requestedType = req.body.type || 'link';
+    const requiredAction = requestedType === 'link' ? 'update' : 'read';
+    if (!hasPermission(req.user.email, req.body.sourceId, requiredAction)) {
+      throw new AppError(requiredAction === 'update'
+        ? '复制认证配置需要源页面修改权限'
+        : '没有读取源页面的权限', 403);
+    }
+  }
   const page = pagesService.createPage(req.body);
-  res.status(201).json(exposeProxyOrigin(page, req));
+  res.status(201).json(exposePublicPage(page, req));
 });
 
 // 更新页面
@@ -52,7 +66,7 @@ router.put('/:id', (req, res) => {
     throw new AppError('没有修改该页面的权限', 403);
   }
   const page = pagesService.updatePage(req.params.id, req.body);
-  res.json(exposeProxyOrigin(page, req));
+  res.json(exposePublicPage(page, req));
 });
 
 // 删除页面
@@ -61,7 +75,7 @@ router.delete('/:id', (req, res) => {
     throw new AppError('没有删除该页面的权限', 403);
   }
   const removed = pagesService.deletePage(req.params.id);
-  res.json(removed);
+  res.json(toPublicPage(removed));
 });
 
 // 切换页面置顶（仅管理员）
@@ -70,7 +84,7 @@ router.put('/:id/pin', (req, res) => {
     throw new AppError('仅管理员可置顶页面', 403);
   }
   const page = pagesService.togglePin(req.params.id);
-  res.json(page);
+  res.json(exposePublicPage(page, req));
 });
 
 // 上传文件（支持多文件 + zip 包）

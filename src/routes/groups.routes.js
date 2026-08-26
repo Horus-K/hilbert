@@ -24,7 +24,7 @@ router.put('/order', requireAdmin, (req, res) => {
 
 // 重命名分组（仅超级管理员）
 router.put('/:name', requireAdmin, (req, res) => {
-  const oldName = decodeURIComponent(req.params.name);
+  const oldName = req.params.name;
   const newName = ((req.body || {}).name || '').trim();
   const groups = groupsService.rename(oldName, newName);
   res.json(groups);
@@ -32,7 +32,7 @@ router.put('/:name', requireAdmin, (req, res) => {
 
 // 删除分组（仅超级管理员）
 router.delete('/:name', requireAdmin, (req, res) => {
-  const name = decodeURIComponent(req.params.name);
+  const name = req.params.name;
   const groups = groupsService.remove(name);
   res.json(groups);
 });

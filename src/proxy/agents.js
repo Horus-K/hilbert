@@ -42,9 +42,12 @@ function getPageRequestAgent(targetUrl, page) {
  * DNS 覆盖：当页面配置了 resolveIp 时，将代理请求的 TCP 连接目标改为指定 IP，
  * 同时保持 Host 头和 TLS SNI 为原始域名
  */
-function applyDnsOverride(page, targetUrl, base, headers) {
-  if (!page || !page.resolveIp) return {};
-  const ip = page.resolveIp;
+function applyDnsOverride(page, targetUrl, base, headers, validatedAddress) {
+  const configuredAddress = page && page.resolveIp && page.url && base.origin === new URL(page.url).origin
+    ? page.resolveIp
+    : '';
+  const ip = configuredAddress || validatedAddress;
+  if (!ip) return {};
   targetUrl.hostname = ip;
   headers.host = base.host;
   if (base.protocol === 'https:') {

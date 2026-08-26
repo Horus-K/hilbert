@@ -26,7 +26,14 @@ function rewriteUrl(value, context) {
   } catch {
     return raw;
   }
-  if (!['http:', 'https:'].includes(url.protocol) || url.origin !== context.upstreamOrigin) return raw;
+  if (!['http:', 'https:'].includes(url.protocol)) return raw;
+  for (const [alias, origin] of Object.entries(context.upstreamOrigins || {})) {
+    if (url.origin === origin) {
+      return `/.hilbert/upstream/${alias}` + url.pathname + url.search + url.hash;
+    }
+  }
+  const primaryOrigin = context.primaryOrigin || context.upstreamOrigin;
+  if (url.origin !== primaryOrigin) return raw;
   return context.mountPrefix + url.pathname + url.search + url.hash;
 }
 

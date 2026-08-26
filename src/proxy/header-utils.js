@@ -59,7 +59,7 @@ function stripHopByHopHeaders(headers, preserveUpgrade = false) {
   return out;
 }
 
-function mapProxyUrlToUpstream(value, req, base, mountPrefix) {
+function mapProxyUrlToUpstream(value, req, base, mountPrefix, page) {
   let url;
   try {
     url = new URL(value);
@@ -68,22 +68,27 @@ function mapProxyUrlToUpstream(value, req, base, mountPrefix) {
   }
   if (url.origin !== requestOrigin(req)) return value;
   let pathname = url.pathname;
+  const mapped = pathname.match(/^\/\.hilbert\/upstream\/([a-z0-9-]+)(\/.*)?$/);
+  if (mapped && page && page.origins && page.origins[mapped[1]]) {
+    return page.origins[mapped[1]] + (mapped[2] || '/') + url.search + url.hash;
+  }
   if (mountPrefix && (pathname === mountPrefix || pathname.startsWith(mountPrefix + '/'))) {
     pathname = pathname.slice(mountPrefix.length) || '/';
   }
-  return base.origin + pathname + url.search + url.hash;
+  const primaryOrigin = page && page.url ? new URL(page.url).origin : base.origin;
+  return primaryOrigin + pathname + url.search + url.hash;
 }
 
 /**
  * 保留浏览器真实语义，只把代理 origin 中的 Origin/Referer 映射到对应上游 URL。
  */
-function buildUpstreamHeaders(req, base, mountPrefix, preserveUpgrade = false) {
+function buildUpstreamHeaders(req, base, mountPrefix, preserveUpgrade = false, page) {
   const headers = stripHopByHopHeaders(req.headers, preserveUpgrade);
   delete headers.host;
   delete headers.cookie;
   headers['accept-encoding'] = negotiateAcceptEncoding(headers['accept-encoding']);
   if (headers.origin === requestOrigin(req)) headers.origin = base.origin;
-  if (headers.referer) headers.referer = mapProxyUrlToUpstream(headers.referer, req, base, mountPrefix);
+  if (headers.referer) headers.referer = mapProxyUrlToUpstream(headers.referer, req, base, mountPrefix, page);
   return headers;
 }
 

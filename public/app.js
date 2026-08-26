@@ -386,6 +386,7 @@ function renderSidebar() {
           <div class="item-menu">
             <button class="menu-fav">${isFav ? '★ 取消收藏' : '☆ 添加收藏'}</button>
             ${isAdmin ? `<button class="menu-pin">${isPinned ? '📌 取消置顶' : '📍 置顶'}</button>` : ''}
+            ${p.type === 'link' ? '<button class="menu-open-external">↗ 在新标签页打开</button>' : ''}
             ${canCopy ? '<button class="menu-copy">复制</button>' : ''}
             ${canEdit ? '<button class="menu-edit">编辑</button>' : ''}
             ${canDel ? '<button class="menu-del danger">删除</button>' : ''}
@@ -454,6 +455,11 @@ function renderSidebar() {
       if (copyBtn) copyBtn.addEventListener('click', () => {
         closeAllItemMenus();
         duplicatePage(p);
+      });
+      const openExternalBtn = menu.querySelector('.menu-open-external');
+      if (openExternalBtn) openExternalBtn.addEventListener('click', () => {
+        closeAllItemMenus();
+        window.open(p.proxyUrl || p.url, '_blank', 'noopener');
       });
       const editBtn = menu.querySelector('.menu-edit');
       if (editBtn) editBtn.addEventListener('click', () => {
@@ -606,7 +612,8 @@ function activateTab(tabId, historyMode = null) {
             const upstreamPath = pageUrl.pathname || '/';
             iframe.setAttribute('sandbox', [
               'allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-modals',
-              'allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox'
+              'allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox',
+              'allow-top-navigation-by-user-activation', 'allow-storage-access-by-user-activation'
             ].join(' '));
             iframe.src = page.proxyUrl || (
               page.proxyOrigin + mountPath + upstreamPath + (pageUrl.search || '')
@@ -764,6 +771,10 @@ async function duplicatePage(page) {
   };
   if (page.type === 'link') {
     body.url = page.url;
+    body.sessionMode = page.sessionMode || 'server';
+    body.origins = page.origins || {};
+    body.authOrigins = page.authOrigins || [];
+    body.resolveIp = page.resolveIp || '';
     body.proxyMode = proxyRoutingMode;
     if (proxyRoutingMode === 'mount' && page.mountPath) body.mountPath = page.mountPath;
     if (page.auth && canEditPage(page.id)) {
@@ -1856,6 +1867,9 @@ function setType(type) {
   $('urlField').classList.toggle('hidden', !needUrl);
   // 直链和直接嵌入只显示 URL，不显示高级配置（认证/代理/DNS）
   $('resolveIpField').classList.toggle('hidden', !isLink);
+  $('sessionModeField').classList.toggle('hidden', !isLink || proxyRoutingMode !== 'host');
+  $('originsField').classList.toggle('hidden', !isLink || proxyRoutingMode !== 'host');
+  $('authOriginsField').classList.toggle('hidden', !isLink || proxyRoutingMode !== 'host');
   $('proxyModeField').classList.add('hidden');
   $('mountPathField').classList.toggle('hidden', !isLink || proxyRoutingMode === 'host');
   $('authField').classList.toggle('hidden', !isLink);
@@ -1921,6 +1935,11 @@ function openModal(page = null) {
   $('fieldName').value = page ? page.name : '';
   $('fieldUrl').value = page && page.type !== 'markdown' ? page.url : '';
   $('fieldResolveIp').value = page ? (page.resolveIp || '') : '';
+  $('fieldSessionMode').value = page && page.sessionMode === 'browser' ? 'browser' : 'server';
+  $('fieldOrigins').value = page && page.origins
+    ? Object.entries(page.origins).map(([alias, origin]) => alias + '=' + origin).join('\n')
+    : '';
+  $('fieldAuthOrigins').value = page && page.authOrigins ? page.authOrigins.join(',') : '';
   $('fieldProxyMode').value = 'mount';
   $('fieldMountPath').value = page && page.mountPath ? page.mountPath.replace(/^\//, '') : '';
   updateProxyModeHint();
@@ -1999,6 +2018,16 @@ $('pageForm').addEventListener('submit', async e => {
     if (proxyRoutingMode === 'mount') body.mountPath = $('fieldMountPath').value.trim();
     // 始终传递 resolveIp（空字符串时后端会删除该字段）
     body.resolveIp = $('fieldResolveIp').value.trim();
+    body.sessionMode = proxyRoutingMode === 'host' ? $('fieldSessionMode').value : 'server';
+    if (proxyRoutingMode === 'host') {
+      body.origins = {};
+      for (const line of $('fieldOrigins').value.split('\n').map(value => value.trim()).filter(Boolean)) {
+        const equals = line.indexOf('=');
+        if (equals > 0) body.origins[line.slice(0, equals).trim()] = line.slice(equals + 1).trim();
+        else body.origins[line] = '';
+      }
+      body.authOrigins = $('fieldAuthOrigins').value.split(',').map(value => value.trim()).filter(Boolean);
+    }
     // 认证配置：勾选时按所选模式提交，未勾选时显式清除
     if ($('authEnabled').checked) {
       const mode = $('authMode').value;

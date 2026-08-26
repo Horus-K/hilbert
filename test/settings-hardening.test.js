@@ -15,6 +15,7 @@ process.env.EXTERNAL_PROXY_PUBLIC_PORT = '3001';
 process.env.EXTERNAL_PROXY_PUBLIC_ORIGIN = '';
 process.env.EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE = '';
 process.env.PAGE_PROXY = '';
+process.env.PAGE_TARGET_ALLOW_PRIVATE_CIDRS = '127.0.0.0/8';
 process.env.JWT_SECRET = 'settings-test-jwt-secret';
 process.env.ADMIN_EMAIL = 'admin@example.test';
 
@@ -300,21 +301,37 @@ test('系统状态汇总不暴露密钥并包含运维指标', () => {
 });
 
 
-test('代理诊断返回 HTTP 连通性、耗时和解析地址', async () => {
+test('代理诊断返回重定向、Cookie、未知 origin 和接入建议且不泄露 Cookie', async () => {
   const upstream = http.createServer((req, res) => {
-    res.writeHead(204, { server: 'diagnostic-test' });
-    res.end();
+    if (req.url === '/health') {
+      res.writeHead(302, { location: '/app' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      server: 'diagnostic-test',
+      'content-type': 'text/html; charset=utf-8',
+      'set-cookie': 'sid=diagnostic-secret; Path=/'
+    });
+    res.end('<a href="https://api.example.test/v1">api</a>' +
+      '<a href="https://unknown.example.test/help">help</a>');
   });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   try {
     const result = await diagnosticsService.diagnosePage({
       id: 'diagnostic-page',
       type: 'link',
-      url: 'http://127.0.0.1:' + upstream.address().port + '/health'
+      url: 'http://127.0.0.1:' + upstream.address().port + '/health',
+      origins: { api: 'https://api.example.test' }
     }, { sub: 'user', email: 'user@example.test' });
     assert.equal(result.ok, true);
-    assert.equal(result.statusCode, 204);
+    assert.equal(result.statusCode, 200);
     assert.equal(result.server, 'diagnostic-test');
+    assert.equal(result.redirects.length, 1);
+    assert.equal(result.setsCookies, true);
+    assert.deepEqual(result.unknownOrigins, ['https://unknown.example.test']);
+    assert.equal(result.recommendation, 'origin-map');
+    assert.equal(JSON.stringify(result).includes('diagnostic-secret'), false);
     assert.ok(result.durationMs >= 0);
   } finally {
     await new Promise(resolve => upstream.close(resolve));

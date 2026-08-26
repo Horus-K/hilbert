@@ -243,6 +243,8 @@ test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备
   fs.writeFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'original', 'utf8');
   fs.mkdirSync(path.join(testDataDir, 'favorites'), { recursive: true });
   fs.writeFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), JSON.stringify(['backup-page']), 'utf8');
+  fs.mkdirSync(path.join(testDataDir, 'page-icons'), { recursive: true });
+  fs.writeFileSync(path.join(testDataDir, 'page-icons', 'backup-page'), 'original-logo');
   const created = backupService.createBackup({ reason: 'test' });
   assert.match(created.name, /^hilbert-\d{8}-\d{6}-[a-f0-9]{8}\.zip$/);
   const zip = new AdmZip(path.join(testDataDir, 'backups', created.name));
@@ -256,6 +258,7 @@ test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备
   rolesRepo.write({ roles: [], assignments: [] });
   fs.writeFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'changed', 'utf8');
   fs.writeFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), '[]', 'utf8');
+  fs.writeFileSync(path.join(testDataDir, 'page-icons', 'backup-page'), 'changed-logo');
 
   const restored = backupService.restoreBackup(created.name, { confirm: 'RESTORE' });
   assert.equal(restored.restored, created.name);
@@ -266,6 +269,7 @@ test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备
   assert.equal(rolesRepo.read().roles[0].id, 'role-a');
   assert.equal(fs.readFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'utf8'), 'original');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), 'utf8')), ['backup-page']);
+  assert.equal(fs.readFileSync(path.join(testDataDir, 'page-icons', 'backup-page'), 'utf8'), 'original-logo');
 });
 
 test('上传的 zip 备份可恢复并保留到备份列表，非法文件会被清理', () => {

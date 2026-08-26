@@ -22,7 +22,8 @@
   - `header`：注入任意自定义请求头（如 Bearer 令牌）
 - **通用隔离代理**
   - 外部内容与 Hilbert UI/API 分别监听不同端口，浏览器侧不同源
-  - 每个页面使用独立 `/hilbert-proxy/<页面id>` 命名空间，不注册上游路径到主站
+  - 推荐每个页面使用独立通配子域名，由严格校验的 Host 同时路由 HTTP 与 WebSocket
+  - 短时一次性票据换取页面 Host-only 会话，不向代理子域名共享主站 JWT
   - 标准 HTML/CSS/Location URL 重写，保留相对路径语义；不识别应用私有字段
   - Origin/Referer 按真实上游 URL 映射，WebSocket 双向透传
   - 目标 Cookie 按「页面 + Hilbert 用户」保存在服务端，不向目标站泄露 Hilbert Cookie
@@ -55,48 +56,61 @@ cp .env.example .env
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `PORT` | 否 | 服务监听端口，默认 `3000` |
-| `EXTERNAL_PROXY_PORT` | 否 | 隔离代理的内部监听端口，默认 `PORT + 1` |
-| `EXTERNAL_PROXY_PUBLIC_PORT` | 否 | 浏览器访问隔离代理的公开端口，默认等于 `EXTERNAL_PROXY_PORT` |
-| `EXTERNAL_PROXY_PUBLIC_ORIGIN` | 否 | 隔离代理的完整公开 origin；设置后优先于公开端口推导 |
+| `PORT` | 否 | Hilbert 主站监听端口，默认 `3000` |
+| `EXTERNAL_PROXY_PORT` | 否 | 外部页面代理的内部监听端口，默认 `PORT + 1` |
+| `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE` | 推荐 | 页面公开 Host 模板；`{pageId}` 必须是独立 DNS 标签，例如 `{pageId}.proxy.example.com` |
+| `EXTERNAL_PROXY_PUBLIC_PROTOCOL` | 否 | 页面代理公开协议：`http` 或 `https`；未设置时沿用主站请求协议 |
+| `EXTERNAL_PROXY_PUBLIC_PORT` | 否 | 页面代理的公开端口；标准 80/443 无需设置，非标准端口时配置 |
+| `EXTERNAL_PROXY_TICKET_TTL_SECONDS` | 否 | 一次性页面访问票据有效期，默认 60 秒 |
+| `EXTERNAL_PROXY_SESSION_TTL_MINUTES` | 否 | 页面 Host-only 会话有效期，默认 480 分钟 |
+| `EXTERNAL_PROXY_PUBLIC_ORIGIN` | 兼容 | 旧版共享代理 origin；不能与 Host 模板同时配置 |
 | `ADMIN_EMAIL` | ✅ | 超级管理员邮箱（多人用逗号分隔），拥有所有权限且可访问 RBAC 配置 |
 
-外部代理 origin 必须与 Hilbert 主站不同。当前 Cookie 认证要求两者保持同一 hostname、使用不同端口，因为 Cookie 可跨端口但默认不会跨 hostname。例如主站为 `https://hilbert.example.com`，代理可配置为 `https://hilbert.example.com:3443`，再由网关把 `3443` 转发到容器的 `3001`。
+### 逐页面通配子域名路由
 
-### 暂缓方案：逐页面通配子域名路由
-
-> 此节记录后续架构方案，**当前版本尚未实现，所列变量也不是当前可用配置**。
-
-当前版本把全部外部页面放在一个代理 origin 下，通过路径命名空间区分页面：
-
-```text
-https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
-```
-
-这种方式可以隔离 Hilbert 主站和外部内容，但无法确定性处理外部脚本在运行时发起的根路径请求。例如脚本请求 `/api`、`/cdn-cgi/rum` 或 `/ws` 时，请求 URL 不再包含 `<pageId>`；HTTP `Referer` 又是可选信息，不能作为可靠的路由键。任意 JavaScript 字符串替换或针对固定路径返回结果都会形成站点特例，因此不作为最终方案。
-
-计划升级为每个页面一个独立代理 Host，由 Host 而不是 Referer 确定上游页面：
+配置 `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE` 后，外部页面按请求 Host 确定页面：
 
 ```text
 https://<pageId>.proxy.example.com/上游路径
 ```
 
-计划中的部署和实现约束：
+例如当前本地 HTTPS 环境可配置：
 
-- DNS 将 `*.proxy.example.com` 解析到外部代理入口，TLS 使用对应的通配证书。
-- 代理根据经过严格校验的 Host 提取页面 ID，并对 HTTP 和 WebSocket 使用同一套路由及 RBAC 校验。
-- 公开路径完整镜像上游路径，因此 `/api`、`/cdn-cgi/rum`、`/ws` 等根路径仍能确定性归属页面。
-- 每个页面拥有独立浏览器 origin，避免一个外部页面脚本读取另一个代理页面的内容。
-- 认证采用短时一次性票据换取页面 Host-only 代理会话；不通过 `Domain=.example.com` 向所有子域名共享 Hilbert JWT。
-- 计划以类似 `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE={pageId}.proxy.example.com` 的模板配置生成公开 Host；具体变量在实现时确定。
-- `PAGE_PROXY` 仍只表示服务端访问上游时使用的出站代理，不参与浏览器路由。
+```env
+PORT=3000
+EXTERNAL_PROXY_PORT=30001
+EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE={pageId}.proxy.local.horus-k.com
+EXTERNAL_PROXY_PUBLIC_PROTOCOL=https
+EXTERNAL_PROXY_TICKET_TTL_SECONDS=60
+EXTERNAL_PROXY_SESSION_TTL_MINUTES=480
+```
 
-本地测试时，系统 `hosts` 文件不支持通配符，需要为测试页面逐条添加记录，例如：
+部署要求：
+
+- DNS 将 `*.proxy.local.horus-k.com` 指向代理入口，TLS 证书覆盖该通配域名。
+- 主站与代理 Host 应位于同一可注册域（本例均属于 `horus-k.com`），避免 iframe 第三方 Cookie 策略阻止页面会话。
+- `hilbert.local.horus-k.com` 转发到主站端口 `3000`。
+- `*.proxy.local.horus-k.com` 转发到代理端口 `30001`。
+- 网关必须保留原始 `Host`，并设置正确的 `X-Forwarded-Proto`；HTTP 与 WebSocket 均转发到代理端口。
+- 每个页面的公开路径完整镜像上游路径，因此 `/api`、`/cdn-cgi/rum`、`/ws` 等根路径请求仍可根据 Host 确定页面。
+- `GET /.hilbert/session` 是票据兑换保留路径，不会转发到上游页面。
+
+页面认证流程：
+
+1. iframe 先访问主站 `GET /hilbert-api/pages/:id/open`，使用主站的 `hilbert_token` 完成用户和 RBAC 校验。
+2. 主站生成默认 60 秒有效、只能使用一次的随机票据，跳转到页面专属 Host。
+3. 页面 Host 在 `/.hilbert/session` 兑换票据，设置不带 `Domain` 的 `hilbert_proxy_session` HttpOnly Cookie；其有效期不会超过主站会话剩余时间。
+4. 后续 HTTP 与 WebSocket 都必须同时匹配“页面 Host + 页面会话 + RBAC 权限”。主站 JWT 不会共享给代理子域名，也不会发送给上游站点。
+
+> 当前票据存储在 Node.js 进程内存中。单实例部署可直接使用；多副本部署需要保证主站票据签发和代理兑换落到同一实例，或后续将票据存储替换为 Redis 等共享存储。
+
+未配置 `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE` 时，系统继续兼容旧版共享 origin：
 
 ```text
-127.0.0.1 fb08901f.proxy.hilbert.test
-127.0.0.1 another-page.proxy.hilbert.test
+https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
 ```
+
+旧模式适合兼容已有部署，但根路径请求缺少页面 ID 时只能依赖有限的 Referer 回退，不具备逐页面 origin 隔离能力。
 
 #### Google OAuth2
 
@@ -188,7 +202,10 @@ metadata:
 data:
   PORT: "3000"
   EXTERNAL_PROXY_PORT: "3001"
-  EXTERNAL_PROXY_PUBLIC_ORIGIN: "https://your-domain.com:3443"
+  EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE: "{pageId}.proxy.example.com"
+  EXTERNAL_PROXY_PUBLIC_PROTOCOL: "https"
+  EXTERNAL_PROXY_TICKET_TTL_SECONDS: "60"
+  EXTERNAL_PROXY_SESSION_TTL_MINUTES: "480"
   ADMIN_EMAIL: "admin@example.com,boss@example.com"
   GOOGLE_CLIENT_ID: "your-client-id.apps.googleusercontent.com"
   GOOGLE_REDIRECT_URI: "https://your-domain.com/callback?type=google"
@@ -258,6 +275,7 @@ spec:
 | POST | `/hilbert-api/pages` | 新建页面（markdown 自动生成占位文档） |
 | PUT | `/hilbert-api/pages/:id` | 更新页面 |
 | DELETE | `/hilbert-api/pages/:id` | 删除页面（连带 md 文件） |
+| GET | `/hilbert-api/pages/:id/open` | 校验权限并进入页面专属代理 Host |
 | GET | `/hilbert-api/groups` | 分组列表 |
 | POST | `/hilbert-api/groups` | 新建分组 |
 | DELETE | `/hilbert-api/groups/:name` | 删除分组 |
@@ -275,9 +293,11 @@ spec:
 | GET | `/hilbert-api/rbac/assignments` | 邮箱-角色分配列表（仅管理员） |
 | POST | `/hilbert-api/rbac/assignments` | 新建分配（仅管理员） |
 | DELETE | `/hilbert-api/rbac/assignments/:email/:roleId` | 删除分配（仅管理员） |
-| ANY | `<隔离代理origin>/hilbert-proxy/<页面id>/**` | 外部页面反向代理（自动认证、标准 URL 重写） |
+| GET | `https://<页面id>.proxy.example.com/.hilbert/session` | 使用一次性票据换取页面 Host-only 会话 |
+| ANY | `https://<页面id>.proxy.example.com/**` | 按 Host 转发外部页面 HTTP/WebSocket 请求 |
+| ANY | `<兼容代理origin>/hilbert-proxy/<页面id>/**` | 未配置 Host 模板时的旧版挂载代理 |
 | GET | `/hilbert-custom/<页面id>/**` | 自定义页面静态资源服务 |
 
 ## 版本
 
-见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.2.0**。
+见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.5.0**。

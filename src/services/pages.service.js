@@ -1,12 +1,14 @@
 const crypto = require('crypto');
 const path = require('path');
-const { PAGE_TYPES } = require('../config');
+const { PAGE_TYPES, external_proxy: externalProxyConfig } = require('../config');
 const { AppError } = require('../utils/errors');
 const { isValidUrl, normalizeAuth, normalizeMountPath } = require('../utils/validators');
 const pagesRepo = require('../repositories/pages.repository');
 const markdownSvc = require('./markdown.service');
 const customPagesSvc = require('./custom-pages.service');
 const pageDocsSvc = require('./page-docs.service');
+
+const hostRoutingEnabled = Boolean(externalProxyConfig.public_host_template);
 
 /**
  * 检查挂载路径是否与其他页面重叠。父子路径也会被 Express 前缀路由互相抢占。
@@ -26,6 +28,12 @@ function getAllPages(email, adminCheck, permCheck) {
   const allPages = pagesRepo.read().map(markdownSvc.resolvePage).map(pageDocsSvc.resolvePageDoc);
   if (adminCheck(email)) return allPages;
   return allPages.filter(p => permCheck(email, p.id, 'read'));
+}
+
+function getPageById(id) {
+  const page = pagesRepo.read().find(candidate => candidate.id === id);
+  if (!page) throw new AppError('页面不存在', 404);
+  return pageDocsSvc.resolvePageDoc(markdownSvc.resolvePage(page));
 }
 
 /**
@@ -52,12 +60,14 @@ function createPage(data) {
   if (type === 'link' || type === 'direct' || type === 'iframe') {
     page.url = url.trim();
     if (type === 'link') {
-      page.proxyMode = 'mount';
-      const mp = normalizeMountPath(mountPath);
-      if (mp === undefined) throw new AppError('挂载路径不合法');
-      if (mp) {
-        if (mountPathConflict(pages, mp)) throw new AppError('挂载路径与其他页面重叠');
-        page.mountPath = mp;
+      page.proxyMode = hostRoutingEnabled ? 'host' : 'mount';
+      if (!hostRoutingEnabled) {
+        const mp = normalizeMountPath(mountPath);
+        if (mp === undefined) throw new AppError('挂载路径不合法');
+        if (mp) {
+          if (mountPathConflict(pages, mp)) throw new AppError('挂载路径与其他页面重叠');
+          page.mountPath = mp;
+        }
       }
       if (resolveIp) page.resolveIp = resolveIp.trim();
       const normalized = normalizeAuth(auth);
@@ -105,8 +115,10 @@ function updatePage(id, data) {
     else delete current.resolveIp;
   }
   if (current.type === 'link') {
-    current.proxyMode = 'mount';
-    if (mountPath !== undefined) {
+    current.proxyMode = hostRoutingEnabled ? 'host' : 'mount';
+    if (hostRoutingEnabled) {
+      delete current.mountPath;
+    } else if (mountPath !== undefined) {
       const mp = normalizeMountPath(mountPath);
       if (mp === undefined) throw new AppError('挂载路径不合法');
       if (mp) {
@@ -206,7 +218,7 @@ function togglePin(id) {
   return markdownSvc.resolvePage(pages[idx]);
 }
 
-module.exports = { getAllPages, createPage, updatePage, deletePage, togglePin };
+module.exports = { getAllPages, getPageById, createPage, updatePage, deletePage, togglePin };
 
 /**
  * 获取页面专属文档内容

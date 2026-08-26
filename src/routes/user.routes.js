@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { isAdmin, getUserPermissions } = require('../services/rbac.service');
 const { isDebugModeEnabled } = require('../services/auth.service');
+const { isHostRoutingEnabled } = require('../utils/proxy-origin');
 
 // 当前登录用户信息
 // 挂载于 /hilbert-api → 实际路径 /hilbert-api/me
@@ -13,7 +14,8 @@ router.get('/me', (req, res) => {
     groups: Array.isArray(req.user.groups) ? req.user.groups : (req.user.groups ? [req.user.groups] : []),
     picture: req.user.picture || null,
     isAdmin: isAdmin(req.user.email),
-    authMode: isDebugModeEnabled() ? 'debug' : 'google'
+    authMode: isDebugModeEnabled() ? 'debug' : 'google',
+    proxyRoutingMode: isHostRoutingEnabled() ? 'host' : 'mount'
   });
 });
 

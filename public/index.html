@@ -221,12 +221,12 @@
           <select id="fieldProxyMode">
             <option value="mount">隔离挂载</option>
           </select>
-          <p class="form-hint" id="proxyModeHint">所有外部页面均通过隔离 origin 下的独立挂载路径访问</p>
+          <p class="form-hint" id="proxyModeHint">代理路由由服务端部署配置决定（逐页面子域名或兼容挂载路径）</p>
         </div>
         <div class="form-item hidden" id="mountPathField">
           <label>挂载路径</label>
           <input type="text" id="fieldMountPath" placeholder="留空则使用 /hilbert-proxy/&lt;页面id&gt;" />
-          <p class="form-hint">通常留空即可；如需固定入口，可配置隔离代理 origin 内的自定义路径</p>
+          <p class="form-hint">仅旧版共享代理 origin 模式使用；逐页面通配子域名模式会忽略此项</p>
         </div>
         <div class="form-item hidden" id="authField">
           <label class="checkbox-label">

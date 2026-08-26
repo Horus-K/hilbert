@@ -2,6 +2,7 @@ const { handleProxyRequest } = require('./proxy-handler');
 const { userKey } = require('./cookie-jar');
 const { hasPermission } = require('../services/rbac.service');
 const pagesRepo = require('../repositories/pages.repository');
+const { extractPageIdFromHost, isHostRoutingEnabled } = require('../utils/proxy-origin');
 
 const proxyRoutes = new Map();
 let routeEntries = [];
@@ -11,7 +12,7 @@ function canReadPage(req, page) {
 }
 
 /**
- * 所有代理页面均使用显式挂载命名空间；不再把上游路径注册到 Hilbert 主站。
+ * 旧版共享代理 origin 使用显式挂载命名空间；Host 路由模式不使用此前缀。
  */
 function getMountPath(page) {
   return page.mountPath || '/hilbert-proxy/' + page.id;
@@ -22,6 +23,12 @@ function pathsOverlap(left, right) {
 }
 
 function refreshProxyRoutes() {
+  if (isHostRoutingEnabled()) {
+    routeEntries = [];
+    proxyRoutes.clear();
+    return;
+  }
+
   const nextEntries = [];
   for (const page of pagesRepo.read()) {
     if (page.type !== 'link') continue;
@@ -54,6 +61,13 @@ function findRouteByPath(reqPath) {
   return null;
 }
 
+function findRouteByHost(hostHeader) {
+  const pageId = extractPageIdFromHost(hostHeader);
+  if (!pageId) return null;
+  const page = pagesRepo.read().find(candidate => candidate.id === pageId && candidate.type === 'link');
+  return page ? { page, mountPrefix: '' } : null;
+}
+
 const recentProxyPaths = new Map();
 const RECENT_PROXY_PATHS_LIMIT = 5000;
 
@@ -62,6 +76,7 @@ function recentPathKey(path, user) {
 }
 
 function recordProxyPath(page, reqPath, user) {
+  if (isHostRoutingEnabled()) return;
   recentProxyPaths.set(recentPathKey(reqPath, user), page.id);
   if (recentProxyPaths.size > RECENT_PROXY_PATHS_LIMIT) {
     recentProxyPaths.delete(recentProxyPaths.keys().next().value);
@@ -69,6 +84,7 @@ function recordProxyPath(page, reqPath, user) {
 }
 
 function findPageByReferer(referer, user) {
+  if (isHostRoutingEnabled()) return null;
   let refUrl;
   try {
     refUrl = new URL(referer);
@@ -86,6 +102,8 @@ function findPageByReferer(referer, user) {
 }
 
 function resolveProxyRequest(req, user = req.user) {
+  if (isHostRoutingEnabled()) return findRouteByHost(req.headers.host);
+
   const reqPath = req.url.split('?')[0];
   const direct = findRouteByPath(reqPath);
   if (direct) return direct;
@@ -112,6 +130,7 @@ function getProxyRoutes() {
 module.exports = {
   createProxyDispatcher,
   findPageByReferer,
+  findRouteByHost,
   findRouteByPath,
   getMountPath,
   getProxyRoutes,

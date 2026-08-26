@@ -43,7 +43,7 @@ function getPageById(id) {
  * 创建页面
  */
 function createPage(data = {}) {
-  const { type = 'link', name, url, icon, group, content, auth, mountPath, resolveIp, sourceId } = data;
+  const { type = 'link', name, url, icon, groupId, content, auth, mountPath, resolveIp, sourceId } = data;
 
   if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
   if (!name || !name.trim()) throw new AppError('页面名称不能为空');
@@ -57,7 +57,7 @@ function createPage(data = {}) {
     type,
     name: name.trim(),
     icon: (icon || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[type] || '🔗')).trim(),
-    group: (group || '未分组').trim()
+    groupId: groupId || null
   };
 
   if (type === 'link' || type === 'direct' || type === 'iframe') {
@@ -107,7 +107,7 @@ function updatePage(id, data = {}) {
   if (idx === -1) throw new AppError('页面不存在', 404);
 
   const current = { ...pages[idx] };
-  const { type, name, url, icon, group, content, auth, mountPath, resolveIp } = data;
+  const { type, name, url, icon, groupId, content, auth, mountPath, resolveIp } = data;
 
   if (type !== undefined) {
     if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
@@ -142,7 +142,7 @@ function updatePage(id, data = {}) {
     else delete current.auth;
   }
   if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[current.type] || '🔗');
-  if (group !== undefined) current.group = (group || '未分组').trim();
+  if (groupId !== undefined) current.groupId = groupId || null;
 
   // 按最终类型做一致性校验，并清理不属于该类型的字段
   if (current.type === 'link') {

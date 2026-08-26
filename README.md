@@ -303,7 +303,8 @@ spec:
 | GET | `/hilbert-api/pages/:id/open` | 校验权限并进入页面专属代理 Host |
 | GET | `/hilbert-api/groups` | 分组列表 |
 | POST | `/hilbert-api/groups` | 新建分组 |
-| DELETE | `/hilbert-api/groups/:name` | 删除分组 |
+| PUT | `/hilbert-api/groups/:id` | 按稳定 ID 重命名分组 |
+| DELETE | `/hilbert-api/groups/:id` | 按稳定 ID 删除分组 |
 | POST | `/hilbert-api/pages/:id/upload` | 上传自定义页面文件（multipart，支持 zip） |
 | GET | `/hilbert-api/pages/:id/files` | 自定义页面文件列表 |
 | DELETE | `/hilbert-api/pages/:id/files/:filename` | 删除自定义页面文件 |
@@ -323,6 +324,7 @@ spec:
 | GET/POST | `/hilbert-api/ops/backups` | 查看或创建完整备份（仅管理员） |
 | GET | `/hilbert-api/ops/backups/:name/download` | 下载备份（仅管理员） |
 | POST | `/hilbert-api/ops/backups/:name/restore` | 恢复备份，确认文本为 RESTORE（仅管理员） |
+| POST | `/hilbert-api/ops/backups/upload-restore` | 上传 zip 备份并恢复，multipart 字段为 backup、confirm（仅管理员） |
 | GET | `/hilbert-api/ops/sessions` | 查看活跃主站/代理会话（仅管理员） |
 | POST | `/hilbert-api/ops/sessions/:id/revoke` | 撤销会话及关联代理会话（仅管理员） |
 | POST | `/hilbert-api/ops/diagnostics/pages/:id` | 执行页面代理连通性诊断（仅管理员） |

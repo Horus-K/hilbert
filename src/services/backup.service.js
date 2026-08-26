@@ -22,6 +22,7 @@ const rolesRepo = require('../repositories/roles.repository');
 const BACKUP_NAME_RE = /^hilbert-\d{8}-\d{6}-[a-f0-9]{8}\.zip$/;
 const RESTORE_DIRS = ['pages', 'page-docs', 'custom-pages', 'favorites', 'audit'];
 const MAX_RESTORE_BYTES = 500 * 1024 * 1024;
+const MAX_BACKUP_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 function ensureBackupDir() {
   fs.mkdirSync(BACKUPS_DIR, { recursive: true });
@@ -77,6 +78,25 @@ function createBackup(options = {}) {
   atomicWriteBuffer(destination, zip.toBuffer());
   pruneBackups();
   return describeBackup(name);
+}
+
+function importAndRestoreBackup(buffer, originalName, options = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new AppError('请选择要恢复的备份文件');
+  if (buffer.length > MAX_BACKUP_UPLOAD_BYTES) throw new AppError('备份文件大小超出限制');
+  if (path.extname(String(originalName || '')).toLowerCase() !== '.zip') throw new AppError('仅支持 .zip 备份文件');
+
+  ensureBackupDir();
+  const name = backupName();
+  const destination = path.join(BACKUPS_DIR, name);
+  atomicWriteBuffer(destination, buffer);
+  try {
+    const result = restoreBackup(name, options);
+    pruneBackups();
+    return { ...result, uploadedAs: name, originalName: path.basename(String(originalName)) };
+  } catch (error) {
+    try { fs.unlinkSync(destination); } catch { /* ignore cleanup failure */ }
+    throw error;
+  }
 }
 
 function describeBackup(name) {
@@ -180,4 +200,12 @@ function deleteBackup(name) {
   return { deleted: name };
 }
 
-module.exports = { backupPath, createBackup, deleteBackup, listBackups, restoreBackup };
+module.exports = {
+  MAX_BACKUP_UPLOAD_BYTES,
+  backupPath,
+  createBackup,
+  deleteBackup,
+  importAndRestoreBackup,
+  listBackups,
+  restoreBackup
+};

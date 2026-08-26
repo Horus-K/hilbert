@@ -859,20 +859,18 @@ function showSettings() {
 
 $('settingsEntry').addEventListener('click', showSettings);
 
-// 强制刷新：清除本应用的本地存储 + Cache Storage + 重新加载当前页（带时间戳参数绕过浏览器 HTTP 缓存）
-$('refreshBtn').addEventListener('click', e => {
+// 强制刷新：清除资源缓存并重新加载，但保留侧边栏常驻、分组折叠等界面偏好。
+$('refreshBtn').addEventListener('click', async e => {
   e.stopPropagation(); // 不触发外层「设置」按钮
-  // 先打标记（必须在 clear 之前），这样新页面加载时才能读到
   sessionStorage.setItem('__forceRefresh', '1');
   try {
-    localStorage.clear();
-    // 仅清除业务相关数据；不清 sessionStorage（__forceRefresh 标记需保留）
     if ('caches' in window) {
-      // 删除所有 Service Worker / Cache API 缓存
-      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+      // 删除所有 Service Worker / Cache API 缓存，完成后再重新加载。
+      const keys = await caches.keys();
+      await Promise.all(keys.map(key => caches.delete(key)));
     }
-  } catch { /* 隐私模式等场景下 storage 不可写，仅继续刷新 */ }
-  // 在 URL 上加时间戳，强制绕过浏览器的 HTTP 缓存拉取 app.js / style.css 等静态资源
+  } catch { /* Cache API 不可用时仍继续刷新 */ }
+  // 在 URL 上加时间戳，强制绕过浏览器的 HTTP 缓存拉取 app.js / style.css 等静态资源。
   const url = new URL(location.href);
   url.searchParams.set('_fresh', Date.now());
   location.href = url.toString();

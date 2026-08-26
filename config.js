@@ -5,6 +5,7 @@ const appPort = parseInt(process.env.PORT || '3000', 10);
 const externalProxyPort = parseInt(process.env.EXTERNAL_PROXY_PORT || String(appPort + 1), 10);
 const externalProxyHostTemplate = String(process.env.EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE || '').trim().toLowerCase();
 const externalProxyProtocol = String(process.env.EXTERNAL_PROXY_PUBLIC_PROTOCOL || '').trim().toLowerCase();
+const debugEnabled = process.env.DEBUG_MODE === 'true';
 const hasExplicitExternalProxyPublicPort = String(process.env.EXTERNAL_PROXY_PUBLIC_PORT || '').trim() !== '';
 const externalProxyPublicPort = hasExplicitExternalProxyPublicPort
   ? parseInt(process.env.EXTERNAL_PROXY_PUBLIC_PORT, 10)
@@ -78,7 +79,14 @@ module.exports = {
     public_host_template: externalProxyHostTemplate,
     public_protocol: externalProxyProtocol,
     ticket_ttl_seconds: parsePositiveInt('EXTERNAL_PROXY_TICKET_TTL_SECONDS', 60, 10, 600),
-    session_ttl_minutes: parsePositiveInt('EXTERNAL_PROXY_SESSION_TTL_MINUTES', 480, 1, 10080)
+    session_ttl_minutes: parsePositiveInt('EXTERNAL_PROXY_SESSION_TTL_MINUTES', 480, 1, 10080),
+    target_allow_private_cidrs: [
+      process.env.PAGE_TARGET_ALLOW_PRIVATE_CIDRS,
+      debugEnabled ? '127.0.0.1/32' : ''
+    ].filter(Boolean).join(','),
+    max_body_bytes: parsePositiveInt('PAGE_PROXY_MAX_BODY_BYTES', 10 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
+    max_rewrite_bytes: parsePositiveInt('PAGE_PROXY_MAX_REWRITE_BYTES', 5 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
+    timeout_ms: parsePositiveInt('PAGE_PROXY_TIMEOUT_MS', 30000, 1000, 300000)
   },
   security: {
     // 页面认证 Secret 的静态加密密钥；未配置时从 JWT_SECRET 派生，生产环境建议单独配置。
@@ -92,7 +100,7 @@ module.exports = {
     session_retention_days: parsePositiveInt('SESSION_RETENTION_DAYS', 7, 1, 365)
   },
   debug: {
-    enabled: process.env.DEBUG_MODE === 'true',
+    enabled: debugEnabled,
     user: {
       id: process.env.DEBUG_USER_ID || '',
       email: process.env.DEBUG_USER_EMAIL || '',

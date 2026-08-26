@@ -10,6 +10,44 @@ function isValidUrl(str) {
   }
 }
 
+function normalizeSessionMode(value) {
+  const mode = value === undefined || value === null || value === '' ? 'server' : String(value);
+  return mode === 'server' || mode === 'browser' ? mode : undefined;
+}
+
+function normalizeResolveIp(value) {
+  const address = String(value || '').trim();
+  return !address || net.isIP(address) ? address : undefined;
+}
+
+function normalizeOrigins(value) {
+  if (value === undefined || value === null || value === '') return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length > 20) return undefined;
+  const normalized = {};
+  for (const [rawAlias, rawOrigin] of entries) {
+    const alias = String(rawAlias).trim().toLowerCase();
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/.test(alias) || normalized[alias]) return undefined;
+    try {
+      const url = new URL(String(rawOrigin).trim());
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
+          url.pathname !== '/' || url.search || url.hash) return undefined;
+      normalized[alias] = url.origin;
+    } catch {
+      return undefined;
+    }
+  }
+  return normalized;
+}
+
+function normalizeAuthOrigins(value, origins) {
+  if (value === undefined || value === null || value === '') return [];
+  if (!Array.isArray(value) || value.length > 20) return undefined;
+  const normalized = [...new Set(value.map(alias => String(alias).trim().toLowerCase()).filter(Boolean))];
+  return normalized.every(alias => origins && origins[alias]) ? normalized : undefined;
+}
+
 /**
  * 校验并规范化认证配置
  * 支持五种模式：basic / login / oauth / header / identity
@@ -157,4 +195,13 @@ function normalizeMountPath(mountPath) {
   return path;
 }
 
-module.exports = { isValidUrl, normalizeAuth, normalizeMountPath };
+module.exports = {
+  isValidUrl,
+  normalizeAuth,
+  normalizeAuthOrigins,
+  normalizeMountPath,
+  normalizeOrigins,
+  normalizeResolveIp,
+  normalizeSessionMode
+};
+const net = require('node:net');

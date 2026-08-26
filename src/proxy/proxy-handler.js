@@ -1,11 +1,15 @@
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
+const { external_proxy: proxyConfig } = require('../../config');
 const { getPageRequestAgent, applyDnsOverride } = require('./agents');
 const { applyAuthHeaders, clearSession, resolveLoginUrl } = require('./auth-injector');
-const { storeResponseCookies } = require('./cookie-jar');
+const { browserCookieHeader, rewriteBrowserSetCookies, storeResponseCookies } = require('./cookie-jar');
 const { buildUpstreamHeaders, stripFrameAncestors, stripHopByHopHeaders } = require('./header-utils');
 const { rewriteHtml, rewriteCss, rewriteUrl } = require('./rewriter');
+const { assertTargetAllowed } = require('./target-policy');
+
+const MAPPED_UPSTREAM_PREFIX = '/.hilbert/upstream/';
 
 function splitPathAndQuery(originalUrl) {
   const qIdx = originalUrl.indexOf('?');
@@ -19,9 +23,19 @@ function splitPathAndQuery(originalUrl) {
  * 公开 URL 在挂载前缀之后完整镜像上游 pathname，使普通相对 URL 无需猜测即可保持语义。
  */
 function resolveProxyTarget(page, originalUrl, stripPrefix = '') {
-  const base = new URL(page.url);
   const incoming = splitPathAndQuery(originalUrl);
+  let base = new URL(page.url);
+  let originAlias = '';
   let restPath = incoming.pathname || '/';
+  if (restPath.startsWith(MAPPED_UPSTREAM_PREFIX)) {
+    const mappedPath = restPath.slice(MAPPED_UPSTREAM_PREFIX.length);
+    const slash = mappedPath.indexOf('/');
+    originAlias = slash === -1 ? mappedPath : mappedPath.slice(0, slash);
+    const mappedOrigin = page.origins && page.origins[originAlias];
+    if (!mappedOrigin) throw new Error('未知关联 origin: ' + originAlias);
+    base = new URL(mappedOrigin + '/');
+    restPath = slash === -1 ? '/' : mappedPath.slice(slash) || '/';
+  }
   const prefixMatched = stripPrefix &&
     (restPath === stripPrefix || restPath.startsWith(stripPrefix + '/'));
   if (prefixMatched) restPath = restPath.slice(stripPrefix.length) || '/';
@@ -35,6 +49,8 @@ function resolveProxyTarget(page, originalUrl, stripPrefix = '') {
   return {
     base,
     basePath: base.pathname,
+    originAlias,
+    primaryOrigin: new URL(page.url).origin,
     restPath,
     target: targetUrl.href,
     targetUrl
@@ -67,7 +83,13 @@ function rewriteRefreshHeader(value, context) {
  */
 function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
   const rewritePrefix = mountPrefix || '';
-  const resolved = resolveProxyTarget(page, req.originalUrl || req.url, rewritePrefix);
+  let resolved;
+  try {
+    resolved = resolveProxyTarget(page, req.originalUrl || req.url, rewritePrefix);
+  } catch (error) {
+    res.status(404).send(error.message);
+    return;
+  }
   const { base, targetUrl } = resolved;
   const auth = page.auth;
   const lib = targetUrl.protocol === 'https:' ? https : http;
@@ -75,9 +97,28 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
   const { recordProxyPath } = require('./route-manager');
   recordProxyPath(page, (req.originalUrl || req.url).split('?')[0], req.user);
 
+  const declaredLength = Number(req.headers['content-length']);
+  if (Number.isFinite(declaredLength) && declaredLength > proxyConfig.max_body_bytes) {
+    req.resume();
+    res.status(413).send('请求体超过代理限制');
+    return;
+  }
   const chunks = [];
-  req.on('data', chunk => chunks.push(chunk));
+  let bodyBytes = 0;
+  let bodyTooLarge = false;
+  req.on('data', chunk => {
+    if (bodyTooLarge) return;
+    bodyBytes += chunk.length;
+    if (bodyBytes > proxyConfig.max_body_bytes) {
+      bodyTooLarge = true;
+      chunks.length = 0;
+    } else chunks.push(chunk);
+  });
   req.on('end', () => {
+    if (bodyTooLarge) {
+      res.status(413).send('请求体超过代理限制');
+      return;
+    }
     const bodyBuffer = Buffer.concat(chunks);
     forward(false).catch(err => {
       if (!res.headersSent) res.status(502).send('代理请求失败: ' + err.message);
@@ -86,7 +127,9 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
 
     async function forward(isRetry) {
       const logicalTargetUrl = new URL(targetUrl.href);
-      const headers = buildUpstreamHeaders(req, base, rewritePrefix);
+      const validatedAddresses = await assertTargetAllowed(page, logicalTargetUrl);
+      const headers = buildUpstreamHeaders(req, base, rewritePrefix, false, page);
+      if (page.sessionMode === 'browser') headers.cookie = browserCookieHeader(req.headers.cookie);
       if (bodyBuffer.length || req.headers['content-length'] !== undefined) {
         headers['content-length'] = String(bodyBuffer.length);
       } else {
@@ -96,7 +139,7 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
 
       await new Promise((resolve, reject) => {
         const networkUrl = new URL(logicalTargetUrl.href);
-        const dnsOptions = applyDnsOverride(page, networkUrl, base, headers);
+        const dnsOptions = applyDnsOverride(page, networkUrl, base, headers, validatedAddresses[0]);
         const requestOptions = {
           method: req.method,
           headers,
@@ -112,9 +155,15 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
             return;
           }
 
-          storeResponseCookies(page, req.user, logicalTargetUrl, proxyRes.headers['set-cookie']);
+          if (page.sessionMode !== 'browser') {
+            storeResponseCookies(page, req.user, logicalTargetUrl, proxyRes.headers['set-cookie']);
+          }
           const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
-          delete responseHeaders['set-cookie'];
+          if (page.sessionMode === 'browser') {
+            const cookies = rewriteBrowserSetCookies(proxyRes.headers['set-cookie']);
+            if (cookies.length) responseHeaders['set-cookie'] = cookies;
+            else delete responseHeaders['set-cookie'];
+          } else delete responseHeaders['set-cookie'];
           delete responseHeaders['x-frame-options'];
           for (const name of ['content-security-policy', 'content-security-policy-report-only']) {
             if (!responseHeaders[name]) continue;
@@ -125,6 +174,9 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
 
           const rewriteContext = {
             mountPrefix: rewritePrefix,
+            primaryOrigin: resolved.primaryOrigin,
+            upstreamOrigins: page.origins || {},
+            currentAlias: resolved.originAlias,
             upstreamOrigin: base.origin,
             upstreamUrl: logicalTargetUrl.href
           };
@@ -173,7 +225,15 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
           else if (encoding === 'gzip' || encoding === 'deflate') source = proxyRes.pipe(zlib.createUnzip());
 
           const responseBuffers = [];
-          source.on('data', chunk => responseBuffers.push(chunk));
+          let responseBytes = 0;
+          source.on('data', chunk => {
+            responseBytes += chunk.length;
+            if (responseBytes > proxyConfig.max_rewrite_bytes) {
+              source.destroy(new Error('目标页面超过重写限制'));
+              return;
+            }
+            responseBuffers.push(chunk);
+          });
           source.on('end', () => {
             const rewritten = rewrite(Buffer.concat(responseBuffers).toString('utf8'), rewriteContext);
             delete responseHeaders['content-encoding'];
@@ -186,6 +246,9 @@ function handleProxyRequest(page, req, res, matchedPath, mountPrefix) {
           proxyRes.on('error', reject);
         });
         proxyReq.on('error', reject);
+        proxyReq.setTimeout(proxyConfig.timeout_ms, () => {
+          proxyReq.destroy(new Error(`上游请求超时 (${proxyConfig.timeout_ms}ms)`));
+        });
         proxyReq.end(bodyBuffer.length ? bodyBuffer : undefined);
       });
     }

@@ -8,6 +8,7 @@ process.env.DATA_ENCRYPTION_KEY = 'test-data-encryption-key-core';
 process.on('exit', () => fs.rmSync(testDataDir, { recursive: true, force: true }));
 
 process.env.PAGE_PROXY = '';
+process.env.PAGE_TARGET_ALLOW_PRIVATE_CIDRS = '127.0.0.0/8';
 process.env.PORT = '3000';
 process.env.EXTERNAL_PROXY_PORT = '3001';
 process.env.EXTERNAL_PROXY_PUBLIC_PORT = '3001';
@@ -22,9 +23,14 @@ const zlib = require('node:zlib');
 const express = require('express');
 const sameOrigin = require('../src/middleware/same-origin');
 
-const { getPageRequestAgent } = require('../src/proxy/agents');
+const { applyDnsOverride, getPageRequestAgent } = require('../src/proxy/agents');
 const { applyAuthHeaders } = require('../src/proxy/auth-injector');
-const { clearCookieJar, storeResponseCookies } = require('../src/proxy/cookie-jar');
+const {
+  browserCookieHeader,
+  clearCookieJar,
+  rewriteBrowserSetCookies,
+  storeResponseCookies
+} = require('../src/proxy/cookie-jar');
 const {
   buildUpstreamHeaders,
   negotiateAcceptEncoding,
@@ -34,7 +40,7 @@ const { handleProxyRequest, resolveProxyTarget } = require('../src/proxy/proxy-h
 const pagesRepo = require('../src/repositories/pages.repository');
 const { findRouteByPath, pathsOverlap, refreshProxyRoutes } = require('../src/proxy/route-manager');
 const { rewriteCss, rewriteHtml } = require('../src/proxy/rewriter');
-const { normalizeAuth } = require('../src/utils/validators');
+const { normalizeAuth, normalizeOrigins, normalizeSessionMode } = require('../src/utils/validators');
 const { sanitizeGoogleAuth } = require('../src/utils/user-identity');
 
 test('挂载 URL 完整镜像上游 pathname，保留相对路径语义', () => {
@@ -50,6 +56,33 @@ test('挂载 URL 完整镜像上游 pathname，保留相对路径语义', () => 
   assert.equal(
     resolveProxyTarget(page, '/api/items', '/mount').target,
     'https://example.test/api/items'
+  );
+});
+
+test('关联 origin 使用保留路径路由，并重写标准绝对 URL', () => {
+  assert.deepEqual(normalizeOrigins({ api: 'https://api.example.test' }), {
+    api: 'https://api.example.test'
+  });
+  assert.equal(normalizeOrigins({ 'Bad Alias': 'https://api.example.test' }), undefined);
+  assert.equal(normalizeOrigins({ api: 'https://api.example.test/path' }), undefined);
+
+  const page = {
+    url: 'https://app.example.test/base/',
+    origins: { api: 'https://api.example.test' }
+  };
+  assert.equal(
+    resolveProxyTarget(page, '/.hilbert/upstream/api/v1/users?q=1', '').target,
+    'https://api.example.test/v1/users?q=1'
+  );
+  assert.equal(
+    rewriteHtml('<a href="https://api.example.test/v1/users">users</a>', {
+      mountPrefix: '',
+      primaryOrigin: 'https://app.example.test',
+      upstreamOrigin: 'https://app.example.test',
+      upstreamUrl: 'https://app.example.test/base/',
+      upstreamOrigins: page.origins
+    }),
+    '<a href="/.hilbert/upstream/api/v1/users">users</a>'
   );
 });
 
@@ -93,6 +126,25 @@ test('请求头只映射来自代理 origin 的 Origin/Referer', () => {
   assert.equal(headers.connection, undefined);
   assert.equal(stripFrameAncestors("default-src 'self'; frame-ancestors 'none'; img-src *"),
     "default-src 'self'; img-src *");
+});
+
+test('映射 origin 的 Referer 去掉保留前缀，并按来源 origin 还原', () => {
+  const page = {
+    url: 'https://app.example.test/',
+    origins: { api: 'https://api.example.test' }
+  };
+  const mapped = buildUpstreamHeaders({
+    headers: {
+      host: 'page.proxy.test',
+      referer: 'http://page.proxy.test/.hilbert/upstream/api/v1/form'
+    }
+  }, new URL(page.origins.api + '/'), '', false, page);
+  assert.equal(mapped.referer, 'https://api.example.test/v1/form');
+
+  const primary = buildUpstreamHeaders({
+    headers: { host: 'page.proxy.test', referer: 'http://page.proxy.test/dashboard' }
+  }, new URL(page.origins.api + '/'), '', false, page);
+  assert.equal(primary.referer, 'https://app.example.test/dashboard');
 });
 
 test('上游压缩协商不声明浏览器未接受或代理无法处理的编码', () => {
@@ -148,6 +200,48 @@ test('目标 Cookie 按页面和用户隔离，Hilbert Cookie 不会透传', asy
   assert.equal(headersOtherPage.cookie, undefined);
 });
 
+test('浏览器会话只转发目标 Cookie，并将目标 Cookie 限定到页面 Host', async () => {
+  assert.equal(normalizeSessionMode(undefined), 'server');
+  assert.equal(normalizeSessionMode('browser'), 'browser');
+  assert.equal(normalizeSessionMode('invalid'), undefined);
+  assert.equal(
+    browserCookieHeader('hilbert_proxy_session=proxy; target=a; hilbert_token=main; theme=dark'),
+    'target=a; theme=dark'
+  );
+  assert.deepEqual(
+    rewriteBrowserSetCookies([
+      'target=a; Domain=.example.test; Path=/; HttpOnly; Secure',
+      'hilbert_proxy_session=overwrite; Path=/'
+    ]),
+    ['target=a; Path=/; HttpOnly; Secure']
+  );
+
+  const headers = { cookie: 'target=a; theme=dark' };
+  await applyAuthHeaders(
+    { id: 'browser-page', sessionMode: 'browser' },
+    headers,
+    { sub: 'user-a' },
+    new URL('https://example.test/')
+  );
+  assert.equal(headers.cookie, 'target=a; theme=dark');
+});
+
+test('页面认证默认不发送给映射 origin，只有显式 alias 才转发', async () => {
+  const page = {
+    id: 'auth-map-page',
+    url: 'https://app.example.test/',
+    origins: { api: 'https://api.example.test' },
+    auth: { mode: 'header', headerName: 'X-App-Token', headerValue: 'secret' }
+  };
+  const blocked = {};
+  await applyAuthHeaders(page, blocked, { sub: 'user' }, new URL(page.origins.api + '/v1'));
+  assert.equal(blocked['x-app-token'], undefined);
+
+  const allowed = {};
+  await applyAuthHeaders({ ...page, authOrigins: ['api'] }, allowed, { sub: 'user' }, new URL(page.origins.api + '/v1'));
+  assert.equal(allowed['x-app-token'], 'secret');
+});
+
 test('路由拒绝相同或父子挂载路径', () => {
   assert.equal(pathsOverlap('/tools', '/tools'), true);
   assert.equal(pathsOverlap('/tools', '/tools/admin'), true);
@@ -178,6 +272,16 @@ test('动态刷新替换路由表，不保留旧挂载路径', () => {
 test('DNS 覆盖仍使用证书校验正常开启的 HTTPS agent', () => {
   const agent = getPageRequestAgent(new URL('https://example.test/'), { resolveIp: '127.0.0.1' });
   assert.notEqual(agent.options.rejectUnauthorized, false);
+});
+
+test('目标请求固定使用已经过策略检查的地址，同时保留 Host 和 TLS SNI', () => {
+  const logical = new URL('https://example.test/app');
+  const network = new URL(logical.href);
+  const headers = {};
+  const options = applyDnsOverride({}, network, logical, headers, '203.0.113.7');
+  assert.equal(network.hostname, '203.0.113.7');
+  assert.equal(headers.host, 'example.test');
+  assert.equal(options.servername, 'example.test');
 });
 
 test('认证配置支持通用 claim 映射和状态码策略', () => {

@@ -3,6 +3,24 @@ const MAX_COOKIES_PER_JAR = 100;
 
 // 目标站 Cookie 只保存在服务端，避免泄露 Hilbert Cookie，也避免代理页面之间互相污染。
 const jars = new Map();
+const RESERVED_BROWSER_COOKIES = new Set(['hilbert_token', 'hilbert_proxy_session']);
+
+function browserCookieHeader(value) {
+  return String(value || '').split(';').map(part => part.trim()).filter(part => {
+    const equals = part.indexOf('=');
+    return equals > 0 && !RESERVED_BROWSER_COOKIES.has(part.slice(0, equals).trim().toLowerCase());
+  }).join('; ');
+}
+
+function rewriteBrowserSetCookies(values) {
+  const headers = Array.isArray(values) ? values : values ? [values] : [];
+  return headers.flatMap(header => {
+    const parts = String(header).split(';');
+    const equals = parts[0].indexOf('=');
+    if (equals <= 0 || RESERVED_BROWSER_COOKIES.has(parts[0].slice(0, equals).trim().toLowerCase())) return [];
+    return [parts.filter((part, index) => index === 0 || !/^\s*domain\s*=/i.test(part)).join(';')];
+  });
+}
 
 function userKey(user) {
   return String(user && (user.sub || user.id || user.email) || 'anonymous');
@@ -131,9 +149,11 @@ function clearCookieJar(pageId, user) {
 }
 
 module.exports = {
+  browserCookieHeader,
   clearCookieJar,
   getCookieHeader,
   parseSetCookie,
+  rewriteBrowserSetCookies,
   storeResponseCookies,
   userKey,
   _jars: jars

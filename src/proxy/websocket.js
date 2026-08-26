@@ -1,9 +1,10 @@
 const http = require('http');
 const https = require('https');
 const jwt = require('jsonwebtoken');
+const { external_proxy: proxyConfig } = require('../../config');
 const { getPageRequestAgent, applyDnsOverride } = require('./agents');
 const { applyAuthHeaders, clearSession } = require('./auth-injector');
-const { storeResponseCookies } = require('./cookie-jar');
+const { browserCookieHeader, rewriteBrowserSetCookies, storeResponseCookies } = require('./cookie-jar');
 const { buildUpstreamHeaders } = require('./header-utils');
 const { resolveProxyTarget } = require('./proxy-handler');
 const { resolveProxyRequest } = require('./route-manager');
@@ -12,6 +13,7 @@ const { extractProxySession } = require('../services/proxy-session.service');
 const { hasPermission } = require('../services/rbac.service');
 const { extractPageIdFromHost, isHostRoutingEnabled } = require('../utils/proxy-origin');
 const sessionRegistry = require('../services/session-registry.service');
+const { assertTargetAllowed } = require('./target-policy');
 
 const activeSockets = new Map();
 sessionRegistry.events.on('sessions:revoked', ids => {
@@ -87,12 +89,14 @@ function setupWebSocket(server) {
 
     try {
       const { base, targetUrl } = resolveProxyTarget(page, req.url, mountPrefix);
-      const headers = buildUpstreamHeaders(req, base, mountPrefix, true);
+      const validatedAddresses = await assertTargetAllowed(page, targetUrl);
+      const headers = buildUpstreamHeaders(req, base, mountPrefix, true, page);
+      if (page.sessionMode === 'browser') headers.cookie = browserCookieHeader(req.headers.cookie);
       await applyAuthHeaders(page, headers, user, targetUrl);
 
       const lib = targetUrl.protocol === 'https:' ? https : http;
       const wsUrl = new URL(targetUrl.href);
-      const wsDnsOpts = applyDnsOverride(page, wsUrl, base, headers);
+      const wsDnsOpts = applyDnsOverride(page, wsUrl, base, headers, validatedAddresses[0]);
       const wsOpts = {
         method: 'GET',
         headers,
@@ -101,12 +105,16 @@ function setupWebSocket(server) {
       };
       const proxyReq = lib.request(wsUrl, wsOpts);
       proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
-        storeResponseCookies(page, user, targetUrl, proxyRes.headers['set-cookie']);
+        if (page.sessionMode !== 'browser') storeResponseCookies(page, user, targetUrl, proxyRes.headers['set-cookie']);
+        const browserSetCookies = page.sessionMode === 'browser'
+          ? rewriteBrowserSetCookies(proxyRes.headers['set-cookie'])
+          : [];
         let raw = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
         for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
           if (proxyRes.rawHeaders[i].toLowerCase() === 'set-cookie') continue;
           raw += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
         }
+        for (const cookie of browserSetCookies) raw += `Set-Cookie: ${cookie}\r\n`;
         raw += '\r\n';
         socket.write(raw);
         if (proxyHead.length) socket.write(proxyHead);
@@ -122,6 +130,7 @@ function setupWebSocket(server) {
         rejectUpgrade(socket, proxyRes.statusCode || 502, proxyRes.statusMessage || 'Bad Gateway');
       });
       proxyReq.on('error', () => socket.destroy());
+      proxyReq.setTimeout(proxyConfig.timeout_ms, () => proxyReq.destroy());
       proxyReq.end();
     } catch {
       socket.destroy();

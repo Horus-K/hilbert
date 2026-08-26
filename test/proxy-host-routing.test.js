@@ -19,6 +19,7 @@ process.env.JWT_SECRET = 'host-routing-test-secret-at-least-32-bytes';
 process.env.ADMIN_EMAIL = 'host-admin@example.test';
 process.env.DEBUG_MODE = 'false';
 process.env.PAGE_PROXY = '';
+process.env.PAGE_TARGET_ALLOW_PRIVATE_CIDRS = '127.0.0.0/8';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -84,7 +85,7 @@ function upgradeRequest(server, { path, host, cookie }) {
   });
 }
 
-function request(server, { path = '/', host, cookie, forwardedProto = 'https' }) {
+function request(server, { path = '/', host, cookie, forwardedProto = 'https', headers: extraHeaders = {} }) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1',
@@ -94,7 +95,8 @@ function request(server, { path = '/', host, cookie, forwardedProto = 'https' })
       headers: {
         Host: host,
         'X-Forwarded-Proto': forwardedProto,
-        ...(cookie ? { Cookie: cookie } : {})
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...extraHeaders
       }
     }, res => {
       const chunks = [];
@@ -160,6 +162,21 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
     );
   });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const apiRequests = [];
+  const apiUpgrades = [];
+  const apiUpstream = http.createServer((req, res) => {
+    apiRequests.push({ url: req.url, authorization: req.headers.authorization, referer: req.headers.referer });
+    res.end('api');
+  });
+  apiUpstream.on('upgrade', (req, socket) => {
+    apiUpgrades.push({ url: req.url, authorization: req.headers.authorization });
+    socket.end(
+      'HTTP/1.1 101 Switching Protocols\r\n' +
+      'Connection: Upgrade\r\n' +
+      'Upgrade: websocket\r\n\r\n'
+    );
+  });
+  await new Promise(resolve => apiUpstream.listen(0, '127.0.0.1', resolve));
 
   const pageA = {
     id: 'host-page-a',
@@ -167,6 +184,7 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
     name: 'Host page A',
     url: `http://127.0.0.1:${upstream.address().port}/base/page?initial=1`,
     proxyMode: 'mount',
+    origins: { api: `http://127.0.0.1:${apiUpstream.address().port}` },
     auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer must-not-leak' }
   };
   const pageB = {
@@ -253,6 +271,34 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
     assert.equal(JSON.parse(rootApiResponse.body).url, '/api/items');
     assert.equal(upstreamRequests.at(-1).cookie, undefined);
 
+    const mappedApiResponse = await request(proxyServer, {
+      path: '/.hilbert/upstream/api/v1/items',
+      host: exchangeUrl.host,
+      cookie: proxyCookie,
+      headers: { Referer: `https://${exchangeUrl.host}/.hilbert/upstream/api/v1/form` }
+    });
+    assert.equal(mappedApiResponse.status, 200);
+    assert.equal(apiRequests.at(-1).url, '/v1/items');
+    assert.equal(apiRequests.at(-1).authorization, undefined);
+    assert.equal(apiRequests.at(-1).referer, pageA.origins.api + '/v1/form');
+
+    pageA.authOrigins = ['api'];
+    await request(proxyServer, {
+      path: '/.hilbert/upstream/api/v1/authorized',
+      host: exchangeUrl.host,
+      cookie: proxyCookie
+    });
+    assert.equal(apiRequests.at(-1).authorization, 'Bearer must-not-leak');
+
+    const mappedUpgrade = await upgradeRequest(proxyServer, {
+      path: '/.hilbert/upstream/api/ws',
+      host: exchangeUrl.host,
+      cookie: proxyCookie
+    });
+    assert.match(mappedUpgrade, /^HTTP\/1\.1 101 /);
+    assert.equal(apiUpgrades.at(-1).url, '/ws');
+    assert.equal(apiUpgrades.at(-1).authorization, 'Bearer must-not-leak');
+
     const wrongPageResponse = await request(proxyServer, {
       path: '/other',
       host: 'host-page-b.proxy.local.horus-k.com',
@@ -286,6 +332,7 @@ test('完整流程：主站票据跳转、Host-only 会话、根路径 HTTP 与 
     await close(mainServer);
     await close(proxyServer);
     await close(upstream);
+    await close(apiUpstream);
     pages.splice(0, pages.length, ...snapshot);
     refreshProxyRoutes();
     clearProxyTickets();

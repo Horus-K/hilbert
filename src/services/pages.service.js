@@ -2,7 +2,15 @@ const crypto = require('crypto');
 const path = require('path');
 const { PAGE_TYPES, external_proxy: externalProxyConfig } = require('../config');
 const { AppError } = require('../utils/errors');
-const { isValidUrl, normalizeAuth, normalizeMountPath } = require('../utils/validators');
+const {
+  isValidUrl,
+  normalizeAuth,
+  normalizeAuthOrigins,
+  normalizeMountPath,
+  normalizeOrigins,
+  normalizeResolveIp,
+  normalizeSessionMode
+} = require('../utils/validators');
 const { mergeAuthSecrets } = require('../utils/auth-secrets');
 const pagesRepo = require('../repositories/pages.repository');
 const markdownSvc = require('./markdown.service');
@@ -43,7 +51,10 @@ function getPageById(id) {
  * 创建页面
  */
 function createPage(data = {}) {
-  const { type = 'link', name, url, icon, groupId, content, auth, mountPath, resolveIp, sourceId } = data;
+  const {
+    type = 'link', name, url, icon, groupId, content, auth, mountPath, resolveIp,
+    sessionMode, origins, authOrigins, sourceId
+  } = data;
 
   if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
   if (!name || !name.trim()) throw new AppError('页面名称不能为空');
@@ -63,6 +74,25 @@ function createPage(data = {}) {
   if (type === 'link' || type === 'direct' || type === 'iframe') {
     page.url = url.trim();
     if (type === 'link') {
+      const normalizedSessionMode = normalizeSessionMode(sessionMode);
+      if (!normalizedSessionMode) throw new AppError('会话模式不合法');
+      if (normalizedSessionMode === 'browser') {
+        if (!hostRoutingEnabled) throw new AppError('浏览器会话仅支持逐页面 Host 路由');
+        page.sessionMode = 'browser';
+      }
+      const normalizedOrigins = normalizeOrigins(origins);
+      if (!normalizedOrigins) throw new AppError('关联 origin 配置不合法');
+      const normalizedAuthOrigins = normalizeAuthOrigins(authOrigins, normalizedOrigins);
+      if (!normalizedAuthOrigins) throw new AppError('关联 origin 认证配置不合法');
+      if (Object.keys(normalizedOrigins).length) {
+        if (!hostRoutingEnabled) throw new AppError('关联 origin 仅支持逐页面 Host 路由');
+        const originValues = Object.values(normalizedOrigins);
+        if (new Set(originValues).size !== originValues.length || originValues.includes(new URL(page.url).origin)) {
+          throw new AppError('关联 origin 不能重复或与主页面 origin 相同');
+        }
+        if (normalizedSessionMode === 'browser') throw new AppError('浏览器会话不能与关联 origin 同时使用');
+        page.origins = normalizedOrigins;
+      }
       page.proxyMode = hostRoutingEnabled ? 'host' : 'mount';
       if (!hostRoutingEnabled) {
         const mp = normalizeMountPath(mountPath);
@@ -72,7 +102,9 @@ function createPage(data = {}) {
           page.mountPath = mp;
         }
       }
-      if (resolveIp) page.resolveIp = resolveIp.trim();
+      const normalizedResolveIp = normalizeResolveIp(resolveIp);
+      if (normalizedResolveIp === undefined) throw new AppError('DNS 解析 IP 不合法');
+      if (normalizedResolveIp) page.resolveIp = normalizedResolveIp;
       let authInput = auth;
       if (authInput === undefined && sourceId) {
         const sourcePage = pages.find(candidate => candidate.id === sourceId && candidate.type === 'link');
@@ -81,6 +113,13 @@ function createPage(data = {}) {
       }
       const normalized = normalizeAuth(authInput);
       if (normalized === undefined) throw new AppError('认证信息不完整');
+      if (normalizedSessionMode === 'browser' && normalized && normalized.mode === 'login') {
+        throw new AppError('浏览器会话不能使用自动表单登录');
+      }
+      if (normalizedAuthOrigins.length) {
+        if (!normalized) throw new AppError('关联 origin 认证需要先配置页面认证');
+        page.authOrigins = normalizedAuthOrigins;
+      }
       if (normalized) page.auth = normalized;
     }
   } else if (type === 'custom') {
@@ -107,7 +146,10 @@ function updatePage(id, data = {}) {
   if (idx === -1) throw new AppError('页面不存在', 404);
 
   const current = { ...pages[idx] };
-  const { type, name, url, icon, groupId, content, auth, mountPath, resolveIp } = data;
+  const {
+    type, name, url, icon, groupId, content, auth, mountPath, resolveIp,
+    sessionMode, origins, authOrigins
+  } = data;
 
   if (type !== undefined) {
     if (!PAGE_TYPES.includes(type)) throw new AppError('不支持的页面类型');
@@ -119,10 +161,24 @@ function updatePage(id, data = {}) {
   }
   if (url !== undefined) current.url = url.trim();
   if (resolveIp !== undefined) {
-    if (resolveIp) current.resolveIp = resolveIp.trim();
+    const normalizedResolveIp = normalizeResolveIp(resolveIp);
+    if (normalizedResolveIp === undefined) throw new AppError('DNS 解析 IP 不合法');
+    if (normalizedResolveIp) current.resolveIp = normalizedResolveIp;
     else delete current.resolveIp;
   }
   if (current.type === 'link') {
+    if (origins !== undefined) {
+      const normalizedOrigins = normalizeOrigins(origins);
+      if (!normalizedOrigins) throw new AppError('关联 origin 配置不合法');
+      if (Object.keys(normalizedOrigins).length) current.origins = normalizedOrigins;
+      else delete current.origins;
+    }
+    if (sessionMode !== undefined) {
+      const normalizedSessionMode = normalizeSessionMode(sessionMode);
+      if (!normalizedSessionMode) throw new AppError('会话模式不合法');
+      if (normalizedSessionMode === 'browser') current.sessionMode = 'browser';
+      else delete current.sessionMode;
+    }
     current.proxyMode = hostRoutingEnabled ? 'host' : 'mount';
     if (hostRoutingEnabled) {
       delete current.mountPath;
@@ -139,7 +195,16 @@ function updatePage(id, data = {}) {
     const normalized = normalizeAuth(mergeAuthSecrets(current.auth, auth));
     if (normalized === undefined) throw new AppError('认证信息不完整');
     if (normalized) current.auth = normalized;
-    else delete current.auth;
+    else {
+      delete current.auth;
+      delete current.authOrigins;
+    }
+  }
+  if (authOrigins !== undefined) {
+    const normalizedAuthOrigins = normalizeAuthOrigins(authOrigins, current.origins || {});
+    if (!normalizedAuthOrigins) throw new AppError('关联 origin 认证配置不合法');
+    if (normalizedAuthOrigins.length) current.authOrigins = normalizedAuthOrigins;
+    else delete current.authOrigins;
   }
   if (icon !== undefined) current.icon = icon.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[current.type] || '🔗');
   if (groupId !== undefined) current.groupId = groupId || null;
@@ -147,6 +212,21 @@ function updatePage(id, data = {}) {
   // 按最终类型做一致性校验，并清理不属于该类型的字段
   if (current.type === 'link') {
     if (!isValidUrl(current.url)) throw new AppError('请输入合法的 http/https 链接');
+    if (current.sessionMode === 'browser') {
+      if (!hostRoutingEnabled) throw new AppError('浏览器会话仅支持逐页面 Host 路由');
+      if (current.auth && current.auth.mode === 'login') throw new AppError('浏览器会话不能使用自动表单登录');
+    }
+    if (current.origins && !hostRoutingEnabled) throw new AppError('关联 origin 仅支持逐页面 Host 路由');
+    if (current.origins) {
+      const originValues = Object.values(current.origins);
+      if (new Set(originValues).size !== originValues.length || originValues.includes(new URL(current.url).origin)) {
+        throw new AppError('关联 origin 不能重复或与主页面 origin 相同');
+      }
+      if (current.sessionMode === 'browser') throw new AppError('浏览器会话不能与关联 origin 同时使用');
+    }
+    if (current.authOrigins && (!current.auth || !normalizeAuthOrigins(current.authOrigins, current.origins || {}))) {
+      throw new AppError('关联 origin 认证配置不合法');
+    }
     markdownSvc.deleteMdFile(current.content);
     delete current.content;
   } else if (current.type === 'direct' || current.type === 'iframe') {
@@ -157,6 +237,9 @@ function updatePage(id, data = {}) {
     delete current.proxyMode;
     delete current.mountPath;
     delete current.resolveIp;
+    delete current.sessionMode;
+    delete current.origins;
+    delete current.authOrigins;
   } else {
     if (current.type === 'custom') {
       delete current.auth;
@@ -164,6 +247,9 @@ function updatePage(id, data = {}) {
       delete current.proxyMode;
       delete current.mountPath;
       delete current.resolveIp;
+      delete current.sessionMode;
+      delete current.origins;
+      delete current.authOrigins;
       if (data.entry !== undefined) {
         const entry = String(data.entry || 'index.html').trim();
         if (/[/\\]/.test(entry) || entry.includes('..')) throw new AppError('入口文件名不合法');
@@ -177,6 +263,9 @@ function updatePage(id, data = {}) {
       delete current.proxyMode;
       delete current.mountPath;
       delete current.resolveIp;
+      delete current.sessionMode;
+      delete current.origins;
+      delete current.authOrigins;
     }
     if (current.type === 'markdown') {
       if (content !== undefined) {

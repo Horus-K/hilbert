@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- 外部链接新增服务端/浏览器 Cookie 会话模式；浏览器模式支持人工登录和 `document.cookie`，并过滤 Hilbert 保留 Cookie。
+- 新增关联 origin 映射，标准 HTML/CSS URL、Location、Refresh、Referer、HTTP 与 WebSocket 共用 `/.hilbert/upstream/<alias>/` 路由；页面认证仅向显式信任的 alias 转发。
+- 外部页面菜单新增“在新标签页打开”，iframe 增加用户触发的顶层导航和 Storage Access 权限。
+- 新增私网 CIDR 允许列表、云元数据硬拒绝、DNS/`resolveIp` 检查、请求体/重写体上限和统一上游超时。
+- 代理诊断新增最多五跳重定向、Cookie 存在性、未知 origin 和接入模式建议，结果不包含 Cookie 值或响应正文。
+- 增加 SSE、重定向、浏览器 Cookie、origin 映射和代理资源边界回归测试；未加入无失败样本支撑的 JavaScript 运行时拦截。
 - 备份与恢复新增本地 zip 上传恢复选项；上传文件会校验格式和大小，恢复前仍自动创建安全备份。
 - 外部页面内容迁移到独立代理 origin，Hilbert UI/API 不再与目标脚本同源。
 - 所有外部页面统一使用独立挂载命名空间，动态路由改为单一内存 dispatcher。

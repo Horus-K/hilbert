@@ -27,6 +27,9 @@
   - 标准 HTML/CSS/Location URL 重写，保留相对路径语义；不识别应用私有字段
   - Origin/Referer 按真实上游 URL 映射，WebSocket 双向透传
   - 目标 Cookie 按「页面 + Hilbert 用户」保存在服务端，不向目标站泄露 Hilbert Cookie
+  - 可选浏览器 Cookie 模式，支持依赖 `document.cookie` 或需要人工登录的页面
+  - 可选关联 origin 映射，将 API、CDN、登录中心和 WebSocket 域名继续收敛到页面专属 Host
+  - 目标网络策略、请求体/重写体上限和统一超时阻止代理越权访问或无限缓冲
 
 ## 技术栈
 
@@ -63,6 +66,10 @@ cp .env.example .env
 | `EXTERNAL_PROXY_PUBLIC_PORT` | 否 | 页面代理的公开端口；标准 80/443 无需设置，非标准端口时配置 |
 | `EXTERNAL_PROXY_TICKET_TTL_SECONDS` | 否 | 一次性页面访问票据有效期，默认 60 秒 |
 | `EXTERNAL_PROXY_SESSION_TTL_MINUTES` | 否 | 页面 Host-only 会话有效期，默认 480 分钟 |
+| `PAGE_TARGET_ALLOW_PRIVATE_CIDRS` | 内网站点需要 | 允许外部页面代理访问的私网 CIDR，逗号分隔；公网默认允许，`DEBUG_MODE=true` 时自动允许 `127.0.0.1/32` |
+| `PAGE_PROXY_MAX_BODY_BYTES` | 否 | 代理请求体上限，默认 `10485760`（10 MiB） |
+| `PAGE_PROXY_MAX_REWRITE_BYTES` | 否 | HTML/CSS 可重写响应上限，默认 `5242880`（5 MiB） |
+| `PAGE_PROXY_TIMEOUT_MS` | 否 | 上游 HTTP、WebSocket 和自动认证超时，默认 `30000` 毫秒 |
 | `EXTERNAL_PROXY_PUBLIC_ORIGIN` | 兼容 | 旧版共享代理 origin；不能与 Host 模板同时配置 |
 | `ADMIN_EMAIL` | ✅ | 超级管理员邮箱（多人用逗号分隔），拥有所有权限且可访问 RBAC 配置 |
 
@@ -103,6 +110,35 @@ EXTERNAL_PROXY_SESSION_TTL_MINUTES=480
 4. 后续 HTTP 与 WebSocket 都必须同时匹配“页面 Host + 页面会话 + RBAC 权限”。主站 JWT 不会共享给代理子域名，也不会发送给上游站点。
 
 > 当前票据存储在 Node.js 进程内存中。单实例部署可直接使用；多副本部署需要保证主站票据签发和代理兑换落到同一实例，或后续将票据存储替换为 Redis 等共享存储。
+
+页面接入模式：
+
+- `server`（默认）：目标 Cookie 保存在服务端，适合 Basic、Header、OAuth 客户端凭证和自动表单登录。
+- `browser`：目标 Cookie 改写为页面 Host-only Cookie，适合用户手动登录以及依赖 `document.cookie` 的应用；仅逐页面 Host 路由可用，不能与自动表单登录同时启用。
+
+#### 关联 origin 怎么填
+
+仅当页面还会访问其他域名时才需要填写；没有跨域请求就留空。建议先运行“代理诊断”，只处理报告中的未知 origin。
+
+例如页面地址是 `https://app.example.com`，页面还会请求 `https://api.example.com`：
+
+```text
+api=https://api.example.com
+```
+
+格式为 `别名=https://域名`，每行一个，只填 origin，不带路径。系统会把该域名的 HTML、CSS、重定向和 WebSocket 请求转到当前页面的代理 Host。
+
+“转发页面认证到关联 origin”默认留空。只有 `api` 与主页面属于同一可信系统，并且确实需要主页面配置的认证信息时，才填写：
+
+```text
+api
+```
+
+多个别名用逗号分隔。不要为公共 CDN、统计或其他第三方域名开启认证转发。关联 origin 仅支持默认的 `server` 会话模式。
+
+页面菜单中的“在新标签页打开”仍使用页面专属代理 Host，可用于完成 iframe 内受限的 SSO/MFA 登录，完成后 iframe 共享同一浏览器 Cookie。
+
+兼容性边界：代理不会解析或改写任意 JavaScript bundle。若应用在 JavaScript 中动态拼接未配置的绝对 URL，诊断会报告未知 origin，需先增加 origin 映射；只有出现可复现且必须支持的失败样本时才考虑运行时拦截。客户端证书、WebAuthn、DRM、WebTransport、反自动化和强制顶层窗口策略不保证在 iframe 内运行。
 
 未配置 `EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE` 时，系统继续兼容旧版共享 origin：
 
@@ -158,6 +194,14 @@ https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
 
 `PAGE_PROXY` 支持 `http://` 和 `https://` 代理地址。留空时页面保持直连；该配置不会影响 Google OAuth，后者仍由 `GOOGLE_API_PROXY` 单独控制。
 
+外部页面目标默认允许公网、拒绝私网。需要访问内网时显式列出范围，例如：
+
+```env
+PAGE_TARGET_ALLOW_PRIVATE_CIDRS=10.20.0.0/16,192.168.50.0/24
+```
+
+策略同时检查目标 URL、DNS 解析结果、`resolveIp`、关联 origin、自动认证端点和重定向目标。云元数据地址始终拒绝，即使位于允许 CIDR 中。
+
 #### 登录限制（可选）
 
 | 变量 | 必填 | 说明 |
@@ -181,7 +225,7 @@ https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
 设置页仅对超级管理员显示以下能力：
 
 - **系统状态**：版本、运行时间、内存、数据目录可写性、页面/RBAC 数量、代理路由、加密状态、审计和会话统计。
-- **代理诊断**：按页面执行真实 DNS、TLS、出站代理和认证链路测试，不返回认证 Secret。
+- **代理诊断**：按页面执行真实 DNS、TLS、出站代理和认证链路测试，跟踪最多五跳重定向，并报告 Cookie、未知 origin 和推荐接入模式；不返回认证 Secret、Cookie 值或响应正文。
 - **备份恢复**：完整备份页面、分组、RBAC、收藏、Markdown、自定义页面和审计日志；恢复前自动创建安全备份。运行中的会话不会被备份或恢复。
 - **审计日志**：记录登录、设置修改、备份恢复、代理诊断和会话撤销，敏感字段递归脱敏。
 - **会话管理**：JWT 带独立 sid，主站与页面代理会话可查看和撤销；撤销主站会话会级联撤销代理会话并关闭已有 WebSocket。

@@ -1,8 +1,10 @@
 const http = require('http');
 const https = require('https');
+const { external_proxy: proxyConfig } = require('../../config');
 const { applyDnsOverride, getPageRequestAgent } = require('./agents');
-const { clearCookieJar, getCookieHeader, storeResponseCookies, userKey } = require('./cookie-jar');
+const { browserCookieHeader, clearCookieJar, getCookieHeader, storeResponseCookies, userKey } = require('./cookie-jar');
 const { sanitizeGoogleAuth } = require('../utils/user-identity');
+const { assertTargetAllowed } = require('./target-policy');
 
 // login 模式的会话状态：页面与当前 Hilbert 用户相互隔离。
 const loginSessions = new Map();
@@ -43,7 +45,9 @@ function resolveLoginUrl(page, base) {
 }
 
 function performLogin(page, base, user) {
-  return new Promise((resolve, reject) => {
+  const logicalLoginUrl = resolveLoginUrl(page, base);
+  if (logicalLoginUrl.origin !== base.origin) return Promise.reject(new Error('登录地址必须与目标页面同源'));
+  return assertTargetAllowed(page, logicalLoginUrl).then(validatedAddresses => new Promise((resolve, reject) => {
     const auth = page.auth;
     const credentials = { [auth.userField]: auth.username, [auth.passwordField]: auth.password };
     const body = auth.loginFormat === 'form'
@@ -60,13 +64,9 @@ function performLogin(page, base, user) {
         'Accept': 'application/json'
       }
     };
-    const logicalLoginUrl = resolveLoginUrl(page, base);
-    if (logicalLoginUrl.origin !== base.origin) {
-      return reject(new Error('登录地址必须与目标页面同源'));
-    }
     const lib = logicalLoginUrl.protocol === 'https:' ? https : http;
     const networkLoginUrl = new URL(logicalLoginUrl.href);
-    const loginDnsOpts = applyDnsOverride(page, networkLoginUrl, base, loginOpts.headers);
+    const loginDnsOpts = applyDnsOverride(page, networkLoginUrl, base, loginOpts.headers, validatedAddresses[0]);
     Object.assign(loginOpts, loginDnsOpts);
     loginOpts.agent = getPageRequestAgent(networkLoginUrl, page);
     const loginReq = lib.request(networkLoginUrl, loginOpts, loginRes => {
@@ -83,24 +83,24 @@ function performLogin(page, base, user) {
           resolve();
           return;
         }
-        const detail = Buffer.concat(chunks).toString('utf8').slice(0, 200);
-        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})${detail ? ': ' + detail : ''}，请检查账号密码、登录路径与请求格式`));
+        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})，请检查账号密码、登录路径与请求格式`));
       });
       loginRes.on('error', reject);
     });
     loginReq.on('error', reject);
+    loginReq.setTimeout(proxyConfig.timeout_ms, () => loginReq.destroy(new Error('目标站登录超时')));
     loginReq.end(body);
-  });
+  }));
 }
 
 /**
  * 通过 OAuth 2.0 客户端凭证模式获取访问令牌
  */
 function fetchOAuthToken(page) {
-  return new Promise((resolve, reject) => {
-    const auth = page.auth;
-    const tokenUrl = new URL(auth.tokenUrl);
-    const lib = tokenUrl.protocol === 'https:' ? https : http;
+  const auth = page.auth;
+  const logicalTokenUrl = new URL(auth.tokenUrl);
+  return assertTargetAllowed({}, logicalTokenUrl).then(validatedAddresses => new Promise((resolve, reject) => {
+    const lib = logicalTokenUrl.protocol === 'https:' ? https : http;
 
     const params = new URLSearchParams({
       grant_type: 'client_credentials',
@@ -119,10 +119,14 @@ function fetchOAuthToken(page) {
       }
     };
 
-    // 令牌端点可能在不同域名，因此不应用页面的 DNS 覆盖，但仍使用页面出站代理。
-    reqOpts.agent = getPageRequestAgent(tokenUrl, page);
+    // 令牌端点可能在不同域名，不使用页面手工 resolveIp，但固定到已通过策略检查的 DNS 地址。
+    const networkTokenUrl = new URL(logicalTokenUrl.href);
+    Object.assign(reqOpts, applyDnsOverride(
+      {}, networkTokenUrl, logicalTokenUrl, reqOpts.headers, validatedAddresses[0]
+    ));
+    reqOpts.agent = getPageRequestAgent(networkTokenUrl, page);
 
-    const req = lib.request(tokenUrl, reqOpts, res => {
+    const req = lib.request(networkTokenUrl, reqOpts, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => {
@@ -143,14 +147,14 @@ function fetchOAuthToken(page) {
             reject(new Error('OAuth 令牌响应解析失败: ' + e.message));
           }
         } else {
-          const detail = Buffer.concat(chunks).toString('utf8').slice(0, 200);
-          reject(new Error(`OAuth 令牌请求失败 (HTTP ${res.statusCode})${detail ? ': ' + detail : ''}`));
+          reject(new Error(`OAuth 令牌请求失败 (HTTP ${res.statusCode})`));
         }
       });
     });
     req.on('error', reject);
+    req.setTimeout(proxyConfig.timeout_ms, () => req.destroy(new Error('OAuth 令牌请求超时')));
     req.end(body);
-  });
+  }));
 }
 
 /**
@@ -159,12 +163,22 @@ function fetchOAuthToken(page) {
  */
 async function applyAuthHeaders(page, headers, user, targetUrl) {
   // 浏览器请求中的 Cookie 属于 Hilbert/代理 origin，绝不能直接转发给目标站。
+  const browserCookies = page.sessionMode === 'browser' ? browserCookieHeader(headers.cookie) : '';
   delete headers.cookie;
-  const storedCookie = getCookieHeader(page, user, targetUrl);
-  if (storedCookie) headers.cookie = storedCookie;
+  if (page.sessionMode === 'browser') {
+    if (browserCookies) headers.cookie = browserCookies;
+  } else {
+    const storedCookie = getCookieHeader(page, user, targetUrl);
+    if (storedCookie) headers.cookie = storedCookie;
+  }
 
   const auth = page.auth;
   if (!auth) return;
+  const primaryOrigin = page.url ? new URL(page.url).origin : targetUrl.origin;
+  if (targetUrl.origin !== primaryOrigin) {
+    const alias = Object.entries(page.origins || {}).find(([, origin]) => origin === targetUrl.origin)?.[0];
+    if (!alias || !(page.authOrigins || []).includes(alias)) return;
+  }
   if (auth.mode === 'identity') {
     for (const mapping of auth.claims || []) {
       let value = getClaim(user, mapping.claim);

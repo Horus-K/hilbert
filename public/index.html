@@ -232,6 +232,24 @@
           <input type="text" id="fieldResolveIp" placeholder="如 10.99.97.104（留空则走正常 DNS 解析）" />
           <p class="form-hint">指定域名解析到的 IP 地址，代理将直接连接该 IP 而非通过 DNS 解析。适用于内网服务或域名尚未解析的场景</p>
         </div>
+        <div class="form-item hidden" id="sessionModeField">
+          <label>会话 Cookie</label>
+          <select id="fieldSessionMode">
+            <option value="server">服务端保管（自动认证）</option>
+            <option value="browser">浏览器保管（手动登录）</option>
+          </select>
+          <p class="form-hint">浏览器模式仅用于逐页面子域名，可支持 document.cookie 和人工登录</p>
+        </div>
+        <div class="form-item hidden" id="originsField">
+          <label>关联 origin</label>
+          <textarea id="fieldOrigins" rows="3" placeholder="api=https://api.example.com&#10;login=https://login.example.com"></textarea>
+          <p class="form-hint">每行 alias=https://origin，仅在逐页面子域名模式使用</p>
+        </div>
+        <div class="form-item hidden" id="authOriginsField">
+          <label>转发页面认证到关联 origin</label>
+          <input type="text" id="fieldAuthOrigins" placeholder="api,login（默认不向关联 origin 发送凭据）" />
+          <p class="form-hint">仅填写确实信任且需要共享 Basic/Header/Identity/OAuth 凭据的 alias</p>
+        </div>
         <div class="form-item hidden" id="proxyModeField">
           <label>代理模式</label>
           <select id="fieldProxyMode">

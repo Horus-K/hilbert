@@ -1,8 +1,10 @@
 const express = require('express');
+const fs = require('node:fs');
 const router = express.Router();
 const { hasPermission, isAdmin } = require('../services/rbac.service');
 const pagesService = require('../services/pages.service');
 const customPagesService = require('../services/custom-pages.service');
+const pageLogoService = require('../services/page-logo.service');
 const { AppError } = require('../utils/errors');
 const {
   buildProxySessionExchangeUrl,
@@ -42,6 +44,16 @@ router.get('/:id/open', (req, res) => {
   return res.redirect(302, buildProxySessionExchangeUrl(page, req, ticket));
 });
 
+router.get('/:id/logo', (req, res) => {
+  if (!hasPermission(req.user.email, req.params.id, 'read')) {
+    throw new AppError('没有查看该页面的权限', 403);
+  }
+  const page = pagesService.getPageById(req.params.id);
+  const file = pageLogoService.logoFile(page.id);
+  if (!page.logoType || !fs.existsSync(file)) throw new AppError('页面 Logo 不存在', 404);
+  res.type(page.logoType).sendFile(file);
+});
+
 // 新增页面
 router.post('/', (req, res) => {
   if (!hasPermission(req.user.email, '*', 'create')) {
@@ -67,6 +79,18 @@ router.put('/:id', (req, res) => {
   }
   const page = pagesService.updatePage(req.params.id, req.body);
   res.json(exposePublicPage(page, req));
+});
+
+router.put('/:id/logo', async (req, res, next) => {
+  try {
+    if (!hasPermission(req.user.email, req.params.id, 'update')) {
+      throw new AppError('没有修改该页面的权限', 403);
+    }
+    const result = await pagesService.updatePageLogo(req.params.id, (req.body || {}).logoUrl);
+    res.json({ ...exposePublicPage(result.page, req), logoWarning: result.warning });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // 删除页面

@@ -22,6 +22,7 @@ let viewingPageDoc = false;   // 是否正在查看页面专属文档
 let docPageId = null;         // 当前查看文档的页面 ID
 let docEditing = false;       // 是否处于文档编辑模式
 let docContent = '';          // 当前文档内容
+let pageSearchQuery = '';     // 侧边栏页面名称搜索
 
 // ---------- 标签页状态 ----------
 let tabs = [];                // 已打开的标签列表 [{ id, pageId, viewType, title, icon, mdContent, scrollTop }]
@@ -83,6 +84,18 @@ const modalOverlay = $('modalOverlay');
 const confirmOverlay = $('confirmOverlay');
 const formError = $('formError');
 const toast = $('toast');
+
+function renderPageLogo(container, page, fallback) {
+  const logo = getPageLogo(page, fallback);
+  container.textContent = logo.text;
+  if (!logo.src) return;
+  const image = document.createElement('img');
+  image.className = 'page-logo';
+  image.src = logo.src;
+  image.alt = '';
+  image.addEventListener('error', () => { container.textContent = page.icon || fallback; });
+  container.replaceChildren(image);
+}
 
 // ---------- API ----------
 // 全局 fetch 包装：携带 Cookie + 401 自动跳转登录
@@ -208,7 +221,7 @@ async function togglePagePin(pageId) {
 
 function renderPinned() {
   // 获取所有置顶页面（按权限过滤）
-  const pinnedPages = pages.filter(p => p.pinned && (isAdmin || canReadPage(p.id)));
+  const pinnedPages = pages.filter(p => p.pinned && (isAdmin || canReadPage(p.id)) && matchesPageSearch(p, pageSearchQuery));
   pinnedCount.textContent = pinnedPages.length || '';
 
   if (pinnedPages.length === 0) {
@@ -223,10 +236,11 @@ function renderPinned() {
     const isDirect = p.type === 'direct';
     item.className = 'pinned-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '');
     item.innerHTML = `
-      <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
+      <span class="item-icon"></span>
       <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
       <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>`;
 
+    renderPageLogo(item.querySelector('.item-icon'), p, p.type === 'markdown' ? '📝' : '🔗');
     item.addEventListener('click', () => {
       if (isDirect) {
         window.open(p.url, '_blank');
@@ -243,13 +257,13 @@ function renderFavorites() {
   // 过滤掉已不存在的页面
   const favPages = favorites.map(id => pages.find(p => p.id === id)).filter(Boolean);
   // 过滤无 read 权限的页面
-  const visiblePages = favPages.filter(p => isAdmin || canReadPage(p.id));
+  const visiblePages = favPages.filter(p => (isAdmin || canReadPage(p.id)) && matchesPageSearch(p, pageSearchQuery));
   favoritesCount.textContent = visiblePages.length || '';
   if (visiblePages.length === 0) {
     favoritesSection.classList.add('empty');
     const hint = document.createElement('div');
     hint.className = 'favorites-empty-hint';
-    hint.textContent = '点击页面更多操作添加收藏';
+    hint.textContent = pageSearchQuery ? '没有匹配的收藏页面' : '点击页面更多操作添加收藏';
     favoritesList.appendChild(hint);
     return;
   }
@@ -259,9 +273,10 @@ function renderFavorites() {
     item.className = 'fav-item' + (p.id === activeId ? ' active' : '');
     item.innerHTML = `
       <span class="fav-indicator"></span>
-      <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
+      <span class="item-icon"></span>
       <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
       <button class="fav-remove-btn" title="取消收藏">★</button>`;
+    renderPageLogo(item.querySelector('.item-icon'), p, p.type === 'markdown' ? '📝' : '🔗');
     item.addEventListener('click', (e) => {
       if (e.target.closest('.fav-remove-btn')) return;
       if (p.type === 'direct') {
@@ -337,7 +352,7 @@ function renderSidebar() {
     groupMap.set(g.id, { name: g.name, items: [] });
   }
   groupMap.set('', { name: '未分组', items: [] });
-  for (const p of pages) {
+  for (const p of pages.filter(p => matchesPageSearch(p, pageSearchQuery))) {
     // 非管理员：过滤无 read 权限的页面
     if (!isAdmin && !canReadPage(p.id)) continue;
     const groupId = p.groupId || '';
@@ -351,7 +366,7 @@ function renderSidebar() {
   for (const [groupId, { name: groupName, items }] of groupMap) {
     if (items.length === 0) continue; // 跳过空分组
     // collapsedGroups 为 null 表示默认全部折叠
-    const isCollapsed = collapsedGroups === null || collapsedGroups.includes(groupId);
+    const isCollapsed = !pageSearchQuery && (collapsedGroups === null || collapsedGroups.includes(groupId));
     
     // 分组标题（可点击折叠/展开）
     const title = document.createElement('div');
@@ -375,7 +390,7 @@ function renderSidebar() {
       const isPinned = !!p.pinned;
       item.className = 'page-item' + (p.id === activeId ? ' active' : '') + (isDirect ? ' is-direct' : '') + (isPinned ? ' is-pinned' : '') + (p.hasDoc && p.type !== 'markdown' ? ' has-doc' : '');
       item.innerHTML = `
-        <span class="item-icon">${escapeHtml(p.icon || (p.type === 'markdown' ? '📝' : '🔗'))}</span>
+        <span class="item-icon"></span>
         <span class="item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
         <span class="item-type-badge">${p.type === 'markdown' ? 'MD' : p.type === 'custom' ? 'CM' : p.type === 'direct' ? 'DL' : p.type === 'iframe' ? 'IF' : ''}</span>
         <span class="item-actions">
@@ -393,6 +408,7 @@ function renderSidebar() {
           </div>
         </span>`;
 
+      renderPageLogo(item.querySelector('.item-icon'), p, p.type === 'markdown' ? '📝' : '🔗');
       // 点击事件：直链页面在新标签页打开
       item.addEventListener('click', () => {
         if (isDirect) {
@@ -501,7 +517,8 @@ function renderTabs() {
   for (const tab of tabs) {
     const el = document.createElement('div');
     el.className = 'tab-item' + (tab.id === activeTabId ? ' active' : '');
-    el.innerHTML = `<span class="tab-icon">${escapeHtml(tab.icon || '🔗')}</span><span class="tab-title">${escapeHtml(tab.title)}</span><button class="tab-close" title="关闭标签">×</button>`;
+    el.innerHTML = `<span class="tab-icon"></span><span class="tab-title">${escapeHtml(tab.title)}</span><button class="tab-close" title="关闭标签">×</button>`;
+    renderPageLogo(el.querySelector('.tab-icon'), tab, '🔗');
     el.addEventListener('click', (e) => {
       if (e.target.closest('.tab-close')) return;
       if (tab.id !== activeTabId) {
@@ -536,6 +553,7 @@ function openTab(page, skipPushState) {
     viewType: viewType,
     title: page.name,
     icon: page.icon || (page.type === 'markdown' ? '📝' : '🔗'),
+    logo: page.logo || '',
     mdContent: null,
     scrollTop: 0
   };
@@ -583,6 +601,7 @@ function activateTab(tabId, historyMode = null) {
   if (page) {
     tab.title = page.name;
     tab.icon = page.icon || (page.type === 'markdown' ? '📝' : '🔗');
+    tab.logo = page.logo || '';
   }
   // 按类型显示内容
   if (tab.viewType === 'iframe' || tab.viewType === 'custom') {
@@ -625,7 +644,7 @@ function activateTab(tabId, historyMode = null) {
   } else if (tab.viewType === 'markdown') {
     mdView.classList.remove('hidden');
     exitMdEdit();
-    mdToolbarIcon.textContent = tab.icon || '📝';
+    renderPageLogo(mdToolbarIcon, tab, '📝');
     mdToolbarTitle.textContent = tab.title;
     mdEditBtn.classList.toggle('hidden', !canEditPage(tab.pageId));
     // 使用缓存的渲染内容（保留滚动位置等状态）
@@ -703,7 +722,8 @@ function saveTabs() {
       pageId: t.pageId,
       viewType: t.viewType,
       title: t.title,
-      icon: t.icon
+      icon: t.icon,
+      logo: t.logo
     }));
     sessionStorage.setItem('hilbert_tabs', JSON.stringify({ tabs: tabData, activeTabId }));
   } catch { /* 忽略 */ }
@@ -725,6 +745,7 @@ function restoreTabs() {
         viewType: td.viewType,
         title: page.name,
         icon: page.icon || td.icon || '🔗',
+        logo: page.logo || '',
         mdContent: null,
         scrollTop: 0
       };
@@ -788,8 +809,16 @@ async function duplicatePage(page) {
     body.content = page.content || '';
   }
   try {
-    await api('', { method: 'POST', body: JSON.stringify(body) });
-    showToast('页面已复制');
+    const created = await api('', { method: 'POST', body: JSON.stringify(body) });
+    let logoWarning = false;
+    try {
+      const logoResult = await api('/' + created.id + '/logo', {
+        method: 'PUT',
+        body: JSON.stringify({ logoUrl: page.logoUrl || '' })
+      });
+      logoWarning = !!logoResult.logoWarning;
+    } catch { logoWarning = true; }
+    showToast(logoWarning ? '页面已复制，Logo 获取失败，已使用默认图标' : '页面已复制');
     await refresh();
   } catch (err) {
     showToast(err.message);
@@ -1408,7 +1437,8 @@ function renderPermTable(role) {
     const row = document.createElement('div');
     row.className = 'rbac-perm-row';
     row.dataset.pageId = p.id;
-    row.innerHTML = `<span class="rbac-perm-page" title="${escapeHtml(p.name)}">${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act" data-act="read" ${actions.includes('read') ? 'checked' : ''} /> 查看</label><label><input type="checkbox" class="perm-act" data-act="update" ${actions.includes('update') ? 'checked' : ''} /> 修改</label><label><input type="checkbox" class="perm-act" data-act="delete" ${actions.includes('delete') ? 'checked' : ''} /> 删除</label></span>`;
+    row.innerHTML = `<span class="rbac-perm-page" title="${escapeHtml(p.name)}"><span class="item-icon"></span> ${escapeHtml(p.name)}</span><span class="rbac-perm-actions"><label><input type="checkbox" class="perm-act" data-act="read" ${actions.includes('read') ? 'checked' : ''} /> 查看</label><label><input type="checkbox" class="perm-act" data-act="update" ${actions.includes('update') ? 'checked' : ''} /> 修改</label><label><input type="checkbox" class="perm-act" data-act="delete" ${actions.includes('delete') ? 'checked' : ''} /> 删除</label></span>`;
+    renderPageLogo(row.querySelector('.item-icon'), p, '🔗');
     // 通配模式下禁用行 checkbox
     if (isAllMode) {
       row.querySelectorAll('.perm-act').forEach(cb => { cb.checked = true; cb.disabled = true; });
@@ -1943,7 +1973,7 @@ function openModal(page = null) {
   $('fieldProxyMode').value = 'mount';
   $('fieldMountPath').value = page && page.mountPath ? page.mountPath.replace(/^\//, '') : '';
   updateProxyModeHint();
-  $('fieldIcon').value = page ? page.icon : '';
+  $('fieldLogoUrl').value = page ? (page.logoUrl || '') : '';
   const hasAuth = !!(page && page.auth);
   $('authEnabled').checked = hasAuth;
   $('authBox').classList.toggle('hidden', !hasAuth);
@@ -2009,7 +2039,7 @@ $('pageForm').addEventListener('submit', async e => {
   const body = {
     type: currentType,
     name: $('fieldName').value.trim(),
-    icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[currentType] || '🔗'),
+    icon: ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[currentType] || '🔗'),
     groupId: $('fieldGroup').value || null
   };
   if (currentType === 'link') {
@@ -2079,20 +2109,30 @@ $('pageForm').addEventListener('submit', async e => {
   const saveBtn = $('saveBtn');
   saveBtn.disabled = true;
   try {
+    let message;
     if (editingId) {
       await api('/' + editingId, { method: 'PUT', body: JSON.stringify(body) });
-      showToast('页面已更新');
+      message = '页面已更新';
     } else {
       const created = await api('', { method: 'POST', body: JSON.stringify(body) });
       editingId = created.id; // 保存 ID 以便后续上传文件
       activeId = created.id;
       currentView = 'page';
-      showToast('页面已创建，现在可以上传文件');
+      message = currentType === 'custom' ? '页面已创建，现在可以上传文件' : '页面已创建';
       // 新建 custom 页面后，加载文件列表（此时只有默认 index.html）
       if (currentType === 'custom') {
         await loadModalFiles(created.id);
       }
     }
+    let logoWarning = false;
+    try {
+      const logoResult = await api('/' + editingId + '/logo', {
+        method: 'PUT',
+        body: JSON.stringify({ logoUrl: $('fieldLogoUrl').value.trim() })
+      });
+      logoWarning = !!logoResult.logoWarning;
+    } catch { logoWarning = true; }
+    showToast(logoWarning ? message + '，Logo 获取失败，已使用默认图标' : message);
     // custom 页面不关闭弹窗，允许继续上传文件；其他类型正常关闭
     if (currentType !== 'custom') {
       closeModal();
@@ -2107,6 +2147,21 @@ $('pageForm').addEventListener('submit', async e => {
 });
 
 $('newPageBtn').addEventListener('click', () => openModal());
+$('searchPageBtn').addEventListener('click', () => {
+  const search = $('pageSearch');
+  search.classList.toggle('hidden');
+  if (search.classList.contains('hidden')) {
+    $('pageSearchInput').value = '';
+    pageSearchQuery = '';
+    renderSidebar();
+  } else {
+    $('pageSearchInput').focus();
+  }
+});
+$('pageSearchInput').addEventListener('input', e => {
+  pageSearchQuery = e.target.value;
+  renderSidebar();
+});
 $('modalClose').addEventListener('click', closeModal);
 $('cancelBtn').addEventListener('click', closeModal);
 modalOverlay.addEventListener('click', e => {

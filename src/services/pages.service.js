@@ -18,6 +18,7 @@ const customPagesSvc = require('./custom-pages.service');
 const pageDocsSvc = require('./page-docs.service');
 const rbacSvc = require('./rbac.service');
 const favoritesSvc = require('./favorites.service');
+const pageLogoSvc = require('./page-logo.service');
 
 const hostRoutingEnabled = Boolean(externalProxyConfig.public_host_template);
 
@@ -304,6 +305,7 @@ function deletePage(id) {
   markdownSvc.deleteMdFile(removed.content);
   pageDocsSvc.deletePageDoc(removed.id);
   customPagesSvc.deleteCustomPageDir(removed.id);
+  pageLogoSvc.deletePageLogo(removed.id);
   return removed;
 }
 
@@ -352,3 +354,33 @@ function updatePageDoc(pageId, content) {
 
 module.exports.getPageDoc = getPageDoc;
 module.exports.updatePageDoc = updatePageDoc;
+
+async function updatePageLogo(pageId, logoUrl) {
+  let pages = pagesRepo.read();
+  const page = pages.find(candidate => candidate.id === pageId);
+  if (!page) throw new AppError('页面不存在', 404);
+
+  const result = await pageLogoSvc.cachePageLogo(page, logoUrl);
+  pages = pagesRepo.read();
+  const idx = pages.findIndex(candidate => candidate.id === pageId);
+  if (idx === -1) {
+    pageLogoSvc.deletePageLogo(pageId);
+    throw new AppError('页面不存在', 404);
+  }
+
+  const current = { ...pages[idx] };
+  const explicitUrl = String(logoUrl || '').trim();
+  if (explicitUrl) current.logoUrl = explicitUrl;
+  else delete current.logoUrl;
+  if (result.cached) current.logoType = result.mimeType;
+  else {
+    delete current.logoType;
+    current.icon = ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[current.type] || '🔗');
+  }
+  const nextPages = [...pages];
+  nextPages[idx] = current;
+  pagesRepo.write(nextPages);
+  return { page: markdownSvc.resolvePage(current), warning: result.warning };
+}
+
+module.exports.updatePageLogo = updatePageLogo;

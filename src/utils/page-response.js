@@ -31,6 +31,7 @@ function toPublicPage(page) {
   if (!page || typeof page !== 'object') return page;
   const result = { ...page };
   if (page.auth) result.auth = toPublicAuth(page.auth);
+  if (page.logoType) result.logo = `/hilbert-api/pages/${encodeURIComponent(page.id)}/logo`;
   return result;
 }
 

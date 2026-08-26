@@ -24,10 +24,19 @@
         </button>
       </div>
 
-      <button class="new-page-btn" id="newPageBtn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        新建页面
-      </button>
+      <div class="sidebar-actions">
+        <button class="new-page-btn" id="newPageBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建页面
+        </button>
+        <button class="new-page-btn" id="searchPageBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/></svg>
+          搜索
+        </button>
+      </div>
+      <div class="page-search hidden" id="pageSearch">
+        <input id="pageSearchInput" type="search" placeholder="搜索页面名称" aria-label="搜索页面名称" />
+      </div>
 
       <!-- 收藏区域 -->
       <div class="favorites-section" id="favoritesSection">
@@ -331,8 +340,9 @@
         </div>
         <div class="form-row">
           <div class="form-item">
-            <label>图标（emoji）</label>
-            <input type="text" id="fieldIcon" placeholder="📊" maxlength="4" />
+            <label>Logo 网址</label>
+            <input type="url" id="fieldLogoUrl" placeholder="留空则自动识别 /favicon.ico" />
+            <p class="form-hint">支持 http/https 图片；获取失败时使用默认图标</p>
           </div>
           <div class="form-item">
             <label>分组</label>
@@ -429,6 +439,8 @@
   <script src="/vendor/marked.min.js"></script>
   <script src="/vendor/dompurify/purify.min.js"></script>
   <script src="/vendor/vditor/dist/index.min.js"></script>
+  <script src="/page-search.js"></script>
+  <script src="/page-logo.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

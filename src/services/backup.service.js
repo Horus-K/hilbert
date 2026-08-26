@@ -20,7 +20,7 @@ const groupsRepo = require('../repositories/groups.repository');
 const rolesRepo = require('../repositories/roles.repository');
 
 const BACKUP_NAME_RE = /^hilbert-\d{8}-\d{6}-[a-f0-9]{8}\.zip$/;
-const RESTORE_DIRS = ['pages', 'page-docs', 'custom-pages', 'favorites', 'audit'];
+const RESTORE_DIRS = ['pages', 'page-docs', 'page-icons', 'custom-pages', 'favorites', 'audit'];
 const MAX_RESTORE_BYTES = 500 * 1024 * 1024;
 const MAX_BACKUP_UPLOAD_BYTES = 100 * 1024 * 1024;
 

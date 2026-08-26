@@ -23,17 +23,16 @@ router.put('/order', requireAdmin, (req, res) => {
 });
 
 // 重命名分组（仅超级管理员）
-router.put('/:name', requireAdmin, (req, res) => {
-  const oldName = req.params.name;
+router.put('/:id', requireAdmin, (req, res) => {
+  const id = req.params.id;
   const newName = ((req.body || {}).name || '').trim();
-  const groups = groupsService.rename(oldName, newName);
+  const groups = groupsService.rename(id, newName);
   res.json(groups);
 });
 
 // 删除分组（仅超级管理员）
-router.delete('/:name', requireAdmin, (req, res) => {
-  const name = req.params.name;
-  const groups = groupsService.remove(name);
+router.delete('/:id', requireAdmin, (req, res) => {
+  const groups = groupsService.remove(req.params.id);
   res.json(groups);
 });
 

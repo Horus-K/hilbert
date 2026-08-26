@@ -293,17 +293,17 @@ function saveCollapsedGroups() {
   } catch { /* 存储失败忽略 */ }
 }
 
-function toggleGroupCollapse(groupName) {
+function toggleGroupCollapse(groupId) {
   if (collapsedGroups === null) {
     // 首次操作：从全部折叠状态开始切换
     // 获取所有分组名，除了当前分组外其他都保持折叠
-    collapsedGroups = [...groups].filter(g => g !== groupName);
+    collapsedGroups = groups.map(g => g.id).filter(id => id !== groupId);
   } else {
-    const idx = collapsedGroups.indexOf(groupName);
+    const idx = collapsedGroups.indexOf(groupId);
     if (idx >= 0) {
       collapsedGroups.splice(idx, 1); // 展开
     } else {
-      collapsedGroups.push(groupName); // 折叠
+      collapsedGroups.push(groupId); // 折叠
     }
   }
   saveCollapsedGroups();
@@ -334,29 +334,30 @@ function renderSidebar() {
   const groupMap = new Map();
   // 先按 groups 顺序初始化（保证排序）
   for (const g of groups) {
-    groupMap.set(g, []);
+    groupMap.set(g.id, { name: g.name, items: [] });
   }
+  groupMap.set('', { name: '未分组', items: [] });
   for (const p of pages) {
     // 非管理员：过滤无 read 权限的页面
     if (!isAdmin && !canReadPage(p.id)) continue;
-    const g = p.group || '未分组';
-    if (!groupMap.has(g)) groupMap.set(g, []);
-    groupMap.get(g).push(p);
+    const groupId = p.groupId || '';
+    if (!groupMap.has(groupId)) groupMap.set(groupId, { name: '未分组', items: [] });
+    groupMap.get(groupId).items.push(p);
   }
 
   // 加载折叠状态（默认全部折叠）
   loadCollapsedGroups();
 
-  for (const [groupName, items] of groupMap) {
+  for (const [groupId, { name: groupName, items }] of groupMap) {
     if (items.length === 0) continue; // 跳过空分组
     // collapsedGroups 为 null 表示默认全部折叠
-    const isCollapsed = collapsedGroups === null || collapsedGroups.includes(groupName);
+    const isCollapsed = collapsedGroups === null || collapsedGroups.includes(groupId);
     
     // 分组标题（可点击折叠/展开）
     const title = document.createElement('div');
     title.className = 'group-title' + (isCollapsed ? ' collapsed' : '');
     title.innerHTML = `<span class="group-arrow">${isCollapsed ? '▶' : '▼'}</span><span class="group-name-text">${escapeHtml(groupName)}</span>`;
-    title.addEventListener('click', () => toggleGroupCollapse(groupName));
+    title.addEventListener('click', () => toggleGroupCollapse(groupId));
     pageList.appendChild(title);
 
     // 分组内容容器
@@ -759,7 +760,7 @@ async function duplicatePage(page) {
     type: page.type,
     name: page.name + '（副本）',
     icon: page.icon,
-    group: page.group
+    groupId: page.groupId
   };
   if (page.type === 'link') {
     body.url = page.url;
@@ -985,6 +986,42 @@ async function restoreBackup(name) {
   } catch (err) { showToast('恢复失败：' + err.message); }
 }
 
+async function uploadAndRestoreBackup() {
+  const input = $('opsBackupUploadInput');
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const confirmation = prompt('将从「' + file.name + '」恢复，当前页面、分组、角色、收藏和自定义文件会被覆盖。\n请输入 RESTORE 继续：');
+  if (confirmation !== 'RESTORE') {
+    input.value = '';
+    return;
+  }
+
+  const button = $('opsUploadRestoreBtn');
+  const formData = new FormData();
+  formData.append('confirm', confirmation);
+  formData.append('backup', file);
+  try {
+    button.disabled = true;
+    button.textContent = '上传恢复中…';
+    const res = await authenticatedFetch('/hilbert-api/ops/backups/upload-restore', {
+      method: 'POST',
+      body: formData
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.error || `请求失败 (${res.status})`);
+    showToast('恢复完成，安全备份：' + result.safetyBackup);
+    [pages, groups] = await Promise.all([api(''), groupsApi()]);
+    renderSidebar(); renderGroupList(); populateDiagnosticPages();
+    await Promise.all([loadSystemStatus(), loadBackups(), loadAndRenderRbac()]);
+  } catch (err) {
+    showToast('上传恢复失败：' + err.message);
+  } finally {
+    input.value = '';
+    button.disabled = false;
+    button.textContent = '上传并恢复';
+  }
+}
+
 async function deleteBackupFile(name) {
   if (!confirm('确定删除备份「' + name + '」吗？')) return;
   try {
@@ -1045,6 +1082,8 @@ function loadOperations() {
 $('opsRefreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('opsRunDiagnosticBtn').addEventListener('click', runPageDiagnostic);
 $('opsCreateBackupBtn').addEventListener('click', createBackupFile);
+$('opsUploadRestoreBtn').addEventListener('click', () => $('opsBackupUploadInput').click());
+$('opsBackupUploadInput').addEventListener('change', uploadAndRestoreBackup);
 $('opsRefreshSessionsBtn').addEventListener('click', loadSessions);
 $('opsRefreshAuditBtn').addEventListener('click', loadAudit);
 $('opsAuditActor').addEventListener('keydown', e => { if (e.key === 'Enter') loadAudit(); });
@@ -1092,14 +1131,14 @@ function renderGroupList() {
   }
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    const count = pages.filter(p => p.group === g).length;
+    const count = pages.filter(p => p.groupId === g.id).length;
     const li = document.createElement('li');
     li.className = 'group-item';
     li.draggable = true;
     li.dataset.index = i;
     li.innerHTML = `
       <span class="group-drag-handle" title="拖拽排序">≡</span>
-      <span class="group-name" title="双击编辑名称">${escapeHtml(g)}</span>
+      <span class="group-name" title="双击编辑名称">${escapeHtml(g.name)}</span>
       <span class="group-count">${count} 个页面</span>
       <button class="group-del" title="删除分组">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -1141,7 +1180,7 @@ function renderGroupList() {
       const [moved] = newOrder.splice(dragSrcIndex, 1);
       newOrder.splice(targetIndex, 0, moved);
       try {
-        groups = await groupsApi('/order', { method: 'PUT', body: JSON.stringify({ order: newOrder }) });
+        groups = await groupsApi('/order', { method: 'PUT', body: JSON.stringify({ order: newOrder.map(group => group.id) }) });
         renderGroupList();
         renderSidebar();
         showToast('分组顺序已更新');
@@ -1156,11 +1195,11 @@ function renderGroupList() {
 }
 
 // 分组名称 inline 编辑
-function startGroupEdit(li, oldName, nameSpan) {
+function startGroupEdit(li, group, nameSpan) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'group-edit-input';
-  input.value = oldName;
+  input.value = group.name;
   input.maxLength = 20;
   nameSpan.replaceWith(input);
   input.focus();
@@ -1168,10 +1207,9 @@ function startGroupEdit(li, oldName, nameSpan) {
 
   const finish = async (save) => {
     const newName = input.value.trim();
-    if (save && newName && newName !== oldName) {
+    if (save && newName && newName !== group.name) {
       try {
-        groups = await groupsApi('/' + encodeURIComponent(oldName), { method: 'PUT', body: JSON.stringify({ name: newName }) });
-        pages = await api('');
+        groups = await groupsApi('/' + encodeURIComponent(group.id), { method: 'PUT', body: JSON.stringify({ name: newName }) });
         renderGroupList();
         renderSidebar();
         showToast('分组已重命名');
@@ -1187,7 +1225,7 @@ function startGroupEdit(li, oldName, nameSpan) {
   input.addEventListener('blur', () => finish(true));
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { input.value = oldName; input.blur(); }
+    if (e.key === 'Escape') { input.value = group.name; input.blur(); }
   });
 }
 
@@ -1210,11 +1248,11 @@ async function addGroup() {
   }
 }
 
-async function deleteGroup(name, count) {
+async function deleteGroup(group, count) {
   const hint = count > 0 ? `，其下 ${count} 个页面将移至「未分组」` : '';
-  if (!confirm(`确定要删除分组「${name}」吗${hint}？`)) return;
+  if (!confirm(`确定要删除分组「${group.name}」吗${hint}？`)) return;
   try {
-    groups = await groupsApi('/' + encodeURIComponent(name), { method: 'DELETE' });
+    groups = await groupsApi('/' + encodeURIComponent(group.id), { method: 'DELETE' });
     pages = await api(''); // 页面分组可能已变更
     renderGroupList();
     renderSidebar();
@@ -1857,12 +1895,10 @@ function setAuthMode(mode) {
 $('authMode').addEventListener('change', () => setAuthMode($('authMode').value));
 
 // 填充分组下拉：已配置分组 + 当前页面分组（防止失效）+ 未分组
-function fillGroupSelect(selected) {
-  const opts = [...groups];
-  if (selected && !opts.includes(selected)) opts.push(selected);
-  if (!opts.includes('未分组')) opts.push('未分组');
+function fillGroupSelect(selectedId) {
+  const opts = [...groups, { id: '', name: '未分组' }];
   $('fieldGroup').innerHTML = opts
-    .map(g => `<option value="${escapeHtml(g)}"${g === selected ? ' selected' : ''}>${escapeHtml(g)}</option>`)
+    .map(g => `<option value="${escapeHtml(g.id)}"${g.id === (selectedId || '') ? ' selected' : ''}>${escapeHtml(g.name)}</option>`)
     .join('');
 }
 
@@ -1926,7 +1962,7 @@ function openModal(page = null) {
     ? 'Client Secret 已配置，留空保持不变'
     : 'Client Secret';
   $('authScope').value = hasAuth ? (page.auth.scope || '') : '';
-  fillGroupSelect(page ? page.group : (groups[0] || '未分组'));
+  fillGroupSelect(page ? page.groupId : (groups[0]?.id || ''));
   setType(page ? page.type || 'link' : 'link');
   // 重置弹窗文件管理状态
   modalFileInput.value = '';
@@ -1955,7 +1991,7 @@ $('pageForm').addEventListener('submit', async e => {
     type: currentType,
     name: $('fieldName').value.trim(),
     icon: $('fieldIcon').value.trim() || ({ markdown: '📝', custom: '🖥️', direct: '🔗', iframe: '🖼️' }[currentType] || '🔗'),
-    group: $('fieldGroup').value || '未分组'
+    groupId: $('fieldGroup').value || null
   };
   if (currentType === 'link') {
     body.url = $('fieldUrl').value.trim();

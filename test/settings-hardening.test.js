@@ -119,10 +119,11 @@ test('JSON 原子写入保留上一版本，并可从备份恢复损坏主文件
 });
 
 test('分组排序拒绝重复、缺失和额外分组', () => {
-  assert.deepEqual(validateGroupOrder(['B', 'A'], ['A', 'B']), ['B', 'A']);
-  assert.throws(() => validateGroupOrder(['A', 'A'], ['A', 'B']), /重复项/);
-  assert.throws(() => validateGroupOrder(['A'], ['A', 'B']), /不匹配/);
-  assert.throws(() => validateGroupOrder(['A', 'C'], ['A', 'B']), /不匹配/);
+  const groups = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
+  assert.deepEqual(validateGroupOrder(['b', 'a'], groups), [groups[1], groups[0]]);
+  assert.throws(() => validateGroupOrder(['a', 'a'], groups), /重复项/);
+  assert.throws(() => validateGroupOrder(['a'], groups), /不匹配/);
+  assert.throws(() => validateGroupOrder(['a', 'c'], groups), /不匹配/);
   assert.throws(() => normalizeGroupName('a/b'), /非法字符/);
   assert.throws(() => normalizeGroupName('x'.repeat(21)), /不能超过/);
   assert.equal(groupKey('ＯＰＳ'), groupKey('ops'));
@@ -227,11 +228,12 @@ test('会话注册表支持主会话级联撤销代理会话', () => {
 });
 
 test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备份', () => {
+  const opsGroup = { id: 'group-ops', name: 'Ops' };
   pagesRepo.write([{
     id: 'backup-page', type: 'link', name: 'Before', url: 'https://example.test/',
-    group: 'Ops', auth: { mode: 'basic', username: 'u', password: 'backup-secret' }
+    groupId: opsGroup.id, auth: { mode: 'basic', username: 'u', password: 'backup-secret' }
   }]);
-  groupsRepo.write(['Ops']);
+  groupsRepo.write([opsGroup]);
   rolesRepo.write({
     roles: [{ id: 'role-a', name: 'Reader', description: '', permissions: [{ pageId: 'backup-page', actions: ['read'] }] }],
     assignments: [{ email: 'user@example.test', roleId: 'role-a' }]
@@ -248,8 +250,8 @@ test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备
   assert.match(backedUpPages, /enc:v1:/);
   assert.equal(zip.getEntry('data/sessions.json'), null);
 
-  pagesRepo.write([{ id: 'changed', type: 'markdown', name: 'Changed', group: '未分组', content: 'x' }]);
-  groupsRepo.write(['Changed']);
+  pagesRepo.write([{ id: 'changed', type: 'markdown', name: 'Changed', groupId: null, content: 'x' }]);
+  groupsRepo.write([{ id: 'group-changed', name: 'Changed' }]);
   rolesRepo.write({ roles: [], assignments: [] });
   fs.writeFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'changed', 'utf8');
   fs.writeFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), '[]', 'utf8');
@@ -259,10 +261,33 @@ test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备
   assert.match(restored.safetyBackup, /^hilbert-/);
   assert.equal(pagesRepo.read()[0].id, 'backup-page');
   assert.equal(pagesRepo.read()[0].auth.password, 'backup-secret');
-  assert.deepEqual(groupsRepo.read(), ['Ops']);
+  assert.deepEqual(groupsRepo.read(), [opsGroup]);
   assert.equal(rolesRepo.read().roles[0].id, 'role-a');
   assert.equal(fs.readFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'utf8'), 'original');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), 'utf8')), ['backup-page']);
+});
+
+test('上传的 zip 备份可恢复并保留到备份列表，非法文件会被清理', () => {
+  const created = backupService.createBackup({ reason: 'upload-test' });
+  const buffer = fs.readFileSync(path.join(testDataDir, 'backups', created.name));
+  pagesRepo.write([{ id: 'changed-after-upload-backup', type: 'markdown', name: 'Changed', group: '未分组', content: 'x' }]);
+
+  const result = backupService.importAndRestoreBackup(buffer, 'local-backup.zip', { confirm: 'RESTORE' });
+  assert.match(result.uploadedAs, /^hilbert-\d{8}-\d{6}-[a-f0-9]{8}\.zip$/);
+  assert.equal(result.originalName, 'local-backup.zip');
+  assert.equal(pagesRepo.read()[0].id, 'backup-page');
+  assert.equal(backupService.listBackups().some(item => item.name === result.uploadedAs), true);
+
+  const before = backupService.listBackups().map(item => item.name);
+  assert.throws(
+    () => backupService.importAndRestoreBackup(Buffer.from('not-a-zip'), 'broken.zip', { confirm: 'RESTORE' }),
+    /zip|central directory|Invalid/i
+  );
+  assert.deepEqual(backupService.listBackups().map(item => item.name), before);
+  assert.throws(
+    () => backupService.importAndRestoreBackup(buffer, 'backup.txt', { confirm: 'RESTORE' }),
+    /仅支持 \.zip/
+  );
 });
 
 test('系统状态汇总不暴露密钥并包含运维指标', () => {

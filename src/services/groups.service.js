@@ -27,11 +27,12 @@ function validateGroupOrder(order, groups) {
   if (order.length !== groups.length || new Set(order).size !== order.length) {
     throw new AppError('分组列表不匹配或包含重复项');
   }
-  const expected = new Set(groups);
-  if (!order.every(group => typeof group === 'string' && expected.has(group))) {
+  const expected = new Set(groups.map(group => group.id));
+  if (!order.every(id => typeof id === 'string' && expected.has(id))) {
     throw new AppError('分组列表不匹配');
   }
-  return [...order];
+  const byId = new Map(groups.map(group => [group.id, group]));
+  return order.map(id => byId.get(id));
 }
 
 function writeGroupsWithPageChanges(nextGroups, pages, nextPages) {
@@ -56,10 +57,10 @@ function getAll() {
 function create(name) {
   const normalizedName = normalizeGroupName(name);
   const groups = groupsRepo.read();
-  if (groups.some(group => groupKey(group) === groupKey(normalizedName))) {
+  if (groups.some(group => groupKey(group.name) === groupKey(normalizedName))) {
     throw new AppError('分组已存在');
   }
-  const next = [...groups, normalizedName];
+  const next = [...groups, { id: require('crypto').randomUUID(), name: normalizedName }];
   groupsRepo.write(next);
   return next;
 }
@@ -71,32 +72,29 @@ function reorder(order) {
   return next;
 }
 
-function rename(oldName, newName) {
+function rename(id, newName) {
   const normalizedName = normalizeGroupName(newName);
   const groups = groupsRepo.read();
-  const idx = groups.indexOf(oldName);
+  const idx = groups.findIndex(group => group.id === id);
   if (idx === -1) throw new AppError('分组不存在', 404);
-  if (groups.some((group, index) => index !== idx && groupKey(group) === groupKey(normalizedName))) {
+  if (groups.some((group, index) => index !== idx && groupKey(group.name) === groupKey(normalizedName))) {
     throw new AppError('分组名称已存在');
   }
 
   const nextGroups = [...groups];
-  nextGroups[idx] = normalizedName;
-  const pages = pagesRepo.read();
-  const nextPages = pages.map(page => page.group === oldName ? { ...page, group: normalizedName } : page);
-
-  writeGroupsWithPageChanges(nextGroups, pages, nextPages);
+  nextGroups[idx] = { ...nextGroups[idx], name: normalizedName };
+  groupsRepo.write(nextGroups);
   return nextGroups;
 }
 
-function remove(name) {
+function remove(id) {
   const groups = groupsRepo.read();
-  const idx = groups.indexOf(name);
+  const idx = groups.findIndex(group => group.id === id);
   if (idx === -1) throw new AppError('分组不存在', 404);
 
-  const nextGroups = groups.filter(group => group !== name);
+  const nextGroups = groups.filter(group => group.id !== id);
   const pages = pagesRepo.read();
-  const nextPages = pages.map(page => page.group === name ? { ...page, group: RESERVED_GROUP } : page);
+  const nextPages = pages.map(page => page.groupId === id ? { ...page, groupId: null } : page);
 
   writeGroupsWithPageChanges(nextGroups, pages, nextPages);
   return nextGroups;

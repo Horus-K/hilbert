@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
 const router = express.Router();
 const requireAdmin = require('../middleware/require-admin');
 const { AppError } = require('../utils/errors');
@@ -8,6 +10,15 @@ const backup = require('../services/backup.service');
 const audit = require('../services/audit.service');
 const sessions = require('../services/session-registry.service');
 const pagesService = require('../services/pages.service');
+
+const backupUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 1, fileSize: backup.MAX_BACKUP_UPLOAD_BYTES },
+  fileFilter: (_req, file, callback) => {
+    if (path.extname(file.originalname).toLowerCase() === '.zip') callback(null, true);
+    else callback(new AppError('仅支持 .zip 备份文件'));
+  }
+});
 
 router.use(requireAdmin);
 
@@ -27,6 +38,30 @@ router.post('/backups', (req, res) => {
   const created = backup.createBackup({ reason: 'manual' });
   audit.record({ req, action: 'backup.create', resourceType: 'backup', resourceId: created.name, details: created });
   res.status(201).json(created);
+});
+
+router.post('/backups/upload-restore', (req, res, next) => {
+  backupUpload.single('backup')(req, res, error => {
+    if (error) return next(error);
+    try {
+      if (!req.file) throw new AppError('请选择要恢复的备份文件');
+      const result = backup.importAndRestoreBackup(
+        req.file.buffer,
+        req.file.originalname,
+        { confirm: req.body && req.body.confirm }
+      );
+      audit.record({
+        req,
+        action: 'backup.upload_restore',
+        resourceType: 'backup',
+        resourceId: result.uploadedAs,
+        details: { ...result, originalName: req.file.originalname }
+      });
+      res.json(result);
+    } catch (uploadError) {
+      next(uploadError);
+    }
+  });
 });
 
 router.get('/backups/:name/download', (req, res) => {

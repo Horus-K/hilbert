@@ -942,6 +942,27 @@ body.sidebar-pinned .sidebar-trigger {
   margin-top: 6px;
 }
 
+@media (min-width: 721px) {
+  .modal:has(#authField:not(.hidden)) { width: 760px; }
+
+  #pageForm:has(#authField:not(.hidden)) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+
+  #pageForm:has(#authField:not(.hidden)) > :first-child,
+  #pageForm:has(#authField:not(.hidden)) > #authField,
+  #pageForm:has(#authField:not(.hidden)) > #customFileField,
+  #pageForm:has(#authField:not(.hidden)) > .form-row,
+  #pageForm:has(#authField:not(.hidden)) > .form-error,
+  #pageForm:has(#authField:not(.hidden)) > .form-actions {
+    grid-column: 1 / -1;
+  }
+
+  #fieldOrigins { min-height: 84px; }
+}
+
 /* ================= Toast ================= */
 
 .toast {

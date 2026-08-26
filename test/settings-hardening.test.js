@@ -1,21 +1,41 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const AdmZip = require('adm-zip');
+const testDataDir = path.join(os.tmpdir(), 'hilbert-settings-' + process.pid);
+fs.rmSync(testDataDir, { recursive: true, force: true });
+process.env.HILBERT_DATA_DIR = testDataDir;
+process.env.DATA_ENCRYPTION_KEY = 'test-data-encryption-key-settings';
+process.on('exit', () => fs.rmSync(testDataDir, { recursive: true, force: true }));
+
 process.env.PORT = '3000';
 process.env.EXTERNAL_PROXY_PORT = '3001';
 process.env.EXTERNAL_PROXY_PUBLIC_PORT = '3001';
 process.env.EXTERNAL_PROXY_PUBLIC_ORIGIN = '';
 process.env.EXTERNAL_PROXY_PUBLIC_HOST_TEMPLATE = '';
 process.env.PAGE_PROXY = '';
+process.env.JWT_SECRET = 'settings-test-jwt-secret';
+process.env.ADMIN_EMAIL = 'admin@example.test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
 const { mergeAuthSecrets } = require('../src/utils/auth-secrets');
 const { atomicWriteJson, readJsonFile } = require('../src/utils/json-file');
 const { toPublicPage } = require('../src/utils/page-response');
 const { validateGroupOrder, normalizeGroupName, groupKey } = require('../src/services/groups.service');
 const { removePageFromList } = require('../src/repositories/favorites.repository');
+const pagesRepo = require('../src/repositories/pages.repository');
+const groupsRepo = require('../src/repositories/groups.repository');
+const rolesRepo = require('../src/repositories/roles.repository');
+const backupService = require('../src/services/backup.service');
+const auditService = require('../src/services/audit.service');
+const sessionRegistry = require('../src/services/session-registry.service');
+const statusService = require('../src/services/system-status.service');
+const diagnosticsService = require('../src/services/diagnostics.service');
+const authService = require('../src/services/auth.service');
+const jwt = require('jsonwebtoken');
+const { decryptSecret, encryptSecret, getEncryptionStatus } = require('../src/utils/secret-crypto');
 const {
   normalizeAssignmentEmail,
   normalizePermissions,
@@ -151,4 +171,140 @@ test('删除页面权限只移除目标页面，保留通配和其他页面权�
 
 test('删除页面时从收藏列表移除全部重复引用', () => {
   assert.deepEqual(removePageFromList(['page-a', 'page-b', 'page-a'], 'page-a'), ['page-b']);
+});
+
+
+test('页面认证 Secret 使用 AES-GCM 加密落盘并透明解密', () => {
+  const cipher = encryptSecret('super-secret');
+  assert.match(cipher, /^enc:v1:/);
+  assert.doesNotMatch(cipher, /super-secret/);
+  assert.equal(decryptSecret(cipher), 'super-secret');
+  assert.equal(getEncryptionStatus().source, 'explicit');
+
+  pagesRepo.write([{
+    id: 'encrypted-page',
+    type: 'link',
+    name: 'Encrypted',
+    url: 'https://example.test/',
+    group: '未分组',
+    auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer disk-secret' }
+  }]);
+  const disk = fs.readFileSync(path.join(testDataDir, 'pages.json'), 'utf8');
+  assert.doesNotMatch(disk, /disk-secret/);
+  assert.match(disk, /enc:v1:/);
+  pagesRepo.invalidate();
+  assert.equal(pagesRepo.read()[0].auth.headerValue, 'Bearer disk-secret');
+});
+
+test('审计日志脱敏记录并支持过滤查询', () => {
+  auditService.record({
+    actor: 'admin@example.test',
+    action: 'page.update',
+    resourceType: 'page',
+    resourceId: 'page-a',
+    details: { password: 'must-not-leak', nested: { clientSecret: 'hidden', name: 'safe' } }
+  });
+  const entries = auditService.query({ actor: 'admin@', action: 'page.', limit: 10 });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].details.password, '[REDACTED]');
+  assert.equal(entries[0].details.nested.clientSecret, '[REDACTED]');
+  assert.equal(entries[0].details.nested.name, 'safe');
+});
+
+test('会话注册表支持主会话级联撤销代理会话', () => {
+  const main = sessionRegistry.createSession({
+    type: 'main', email: 'user@example.test', expiresAt: Date.now() + 60_000
+  });
+  const proxy = sessionRegistry.createSession({
+    type: 'proxy', email: 'user@example.test', pageId: 'page-a',
+    parentSessionId: main.id, expiresAt: Date.now() + 60_000
+  });
+  assert.equal(sessionRegistry.isActive(main.id), true);
+  assert.equal(sessionRegistry.isActive(proxy.id), true);
+  assert.equal(sessionRegistry.revoke(main.id, 'admin@example.test'), true);
+  assert.equal(sessionRegistry.isActive(main.id), false);
+  assert.equal(sessionRegistry.isActive(proxy.id), false);
+});
+
+test('完整备份可恢复页面、分组和 RBAC，且恢复前创建安全备份', () => {
+  pagesRepo.write([{
+    id: 'backup-page', type: 'link', name: 'Before', url: 'https://example.test/',
+    group: 'Ops', auth: { mode: 'basic', username: 'u', password: 'backup-secret' }
+  }]);
+  groupsRepo.write(['Ops']);
+  rolesRepo.write({
+    roles: [{ id: 'role-a', name: 'Reader', description: '', permissions: [{ pageId: 'backup-page', actions: ['read'] }] }],
+    assignments: [{ email: 'user@example.test', roleId: 'role-a' }]
+  });
+  fs.mkdirSync(path.join(testDataDir, 'custom-pages', 'backup-page'), { recursive: true });
+  fs.writeFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'original', 'utf8');
+  fs.mkdirSync(path.join(testDataDir, 'favorites'), { recursive: true });
+  fs.writeFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), JSON.stringify(['backup-page']), 'utf8');
+  const created = backupService.createBackup({ reason: 'test' });
+  assert.match(created.name, /^hilbert-\d{8}-\d{6}-[a-f0-9]{8}\.zip$/);
+  const zip = new AdmZip(path.join(testDataDir, 'backups', created.name));
+  const backedUpPages = zip.readAsText('data/pages.json');
+  assert.doesNotMatch(backedUpPages, /backup-secret/);
+  assert.match(backedUpPages, /enc:v1:/);
+  assert.equal(zip.getEntry('data/sessions.json'), null);
+
+  pagesRepo.write([{ id: 'changed', type: 'markdown', name: 'Changed', group: '未分组', content: 'x' }]);
+  groupsRepo.write(['Changed']);
+  rolesRepo.write({ roles: [], assignments: [] });
+  fs.writeFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'changed', 'utf8');
+  fs.writeFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), '[]', 'utf8');
+
+  const restored = backupService.restoreBackup(created.name, { confirm: 'RESTORE' });
+  assert.equal(restored.restored, created.name);
+  assert.match(restored.safetyBackup, /^hilbert-/);
+  assert.equal(pagesRepo.read()[0].id, 'backup-page');
+  assert.equal(pagesRepo.read()[0].auth.password, 'backup-secret');
+  assert.deepEqual(groupsRepo.read(), ['Ops']);
+  assert.equal(rolesRepo.read().roles[0].id, 'role-a');
+  assert.equal(fs.readFileSync(path.join(testDataDir, 'custom-pages', 'backup-page', 'index.html'), 'utf8'), 'original');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(testDataDir, 'favorites', 'user@example.test.json'), 'utf8')), ['backup-page']);
+});
+
+test('系统状态汇总不暴露密钥并包含运维指标', () => {
+  const status = statusService.getStatus();
+  assert.equal(status.data.writable, true);
+  assert.equal(status.encryption.enabled, true);
+  assert.equal(typeof status.sessions.active, 'number');
+  assert.equal(typeof status.audit.bytes, 'number');
+  assert.equal(JSON.stringify(status).includes('test-data-encryption-key'), false);
+});
+
+
+test('代理诊断返回 HTTP 连通性、耗时和解析地址', async () => {
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(204, { server: 'diagnostic-test' });
+    res.end();
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  try {
+    const result = await diagnosticsService.diagnosePage({
+      id: 'diagnostic-page',
+      type: 'link',
+      url: 'http://127.0.0.1:' + upstream.address().port + '/health'
+    }, { sub: 'user', email: 'user@example.test' });
+    assert.equal(result.ok, true);
+    assert.equal(result.statusCode, 204);
+    assert.equal(result.server, 'diagnostic-test');
+    assert.ok(result.durationMs >= 0);
+  } finally {
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+
+test('主站 JWT 包含可撤销 sid，并与注册表过期时间一致', () => {
+  const issued = authService.issueMainSession({
+    id: 'user-id', email: 'user@example.test', name: 'User'
+  }, { headers: {}, socket: {} });
+  const decoded = jwt.verify(issued.token, authService.GOOGLE_CONFIG.jwt_secret);
+  assert.equal(decoded.sid, issued.session.id);
+  assert.equal(sessionRegistry.isActive(decoded.sid), true);
+  assert.ok(Math.abs(decoded.exp * 1000 - issued.session.expiresAt) < 2000);
+  sessionRegistry.revoke(decoded.sid, 'admin@example.test');
+  assert.equal(sessionRegistry.isActive(decoded.sid), false);
 });

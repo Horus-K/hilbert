@@ -11,6 +11,28 @@ const { GOOGLE_CONFIG } = require('../services/auth.service');
 const { extractProxySession } = require('../services/proxy-session.service');
 const { hasPermission } = require('../services/rbac.service');
 const { extractPageIdFromHost, isHostRoutingEnabled } = require('../utils/proxy-origin');
+const sessionRegistry = require('../services/session-registry.service');
+
+const activeSockets = new Map();
+sessionRegistry.events.on('sessions:revoked', ids => {
+  for (const id of ids) {
+    const sockets = activeSockets.get(id);
+    if (!sockets) continue;
+    for (const socket of sockets) socket.destroy();
+    activeSockets.delete(id);
+  }
+});
+
+function trackSessionSocket(sessionId, socket) {
+  if (!sessionId) return;
+  if (!activeSockets.has(sessionId)) activeSockets.set(sessionId, new Set());
+  const sockets = activeSockets.get(sessionId);
+  sockets.add(socket);
+  socket.once('close', () => {
+    sockets.delete(socket);
+    if (!sockets.size) activeSockets.delete(sessionId);
+  });
+}
 
 function rejectUpgrade(socket, statusCode, statusText) {
   socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`);
@@ -21,7 +43,10 @@ function extractMainUser(req) {
   const tokenMatch = (req.headers.cookie || '').match(/(?:^|;\s*)hilbert_token=([^;]+)/);
   if (!tokenMatch) return null;
   try {
-    return jwt.verify(decodeURIComponent(tokenMatch[1]), GOOGLE_CONFIG.jwt_secret);
+    const user = jwt.verify(decodeURIComponent(tokenMatch[1]), GOOGLE_CONFIG.jwt_secret);
+    if (user.sid && !sessionRegistry.isActive(user.sid)) return null;
+    if (user.sid) sessionRegistry.touch(user.sid);
+    return user;
   } catch {
     return null;
   }
@@ -86,6 +111,8 @@ function setupWebSocket(server) {
         socket.write(raw);
         if (proxyHead.length) socket.write(proxyHead);
         if (head.length) proxySocket.write(head);
+        trackSessionSocket(user.sid, socket);
+        trackSessionSocket(user.sid, proxySocket);
         proxySocket.pipe(socket);
         socket.pipe(proxySocket);
       });
@@ -102,4 +129,4 @@ function setupWebSocket(server) {
   });
 }
 
-module.exports = { extractMainUser, resolveUpgradeContext, setupWebSocket };
+module.exports = { activeSockets, extractMainUser, resolveUpgradeContext, setupWebSocket };

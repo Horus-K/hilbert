@@ -2,10 +2,15 @@ const path = require('path');
 const baseConfig = require('../../config');
 
 // 数据路径
-const DATA_DIR = path.join(__dirname, '../../data');
+const DATA_DIR = process.env.HILBERT_DATA_DIR
+  ? path.resolve(process.env.HILBERT_DATA_DIR)
+  : path.join(__dirname, '../../data');
 const DATA_FILE = path.join(DATA_DIR, 'pages.json');
 const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
 const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const AUDIT_DIR = path.join(DATA_DIR, 'audit');
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 
 // Markdown 文件存储
 const PAGES_DIR = path.join(DATA_DIR, 'pages');
@@ -49,6 +54,9 @@ module.exports = {
   DATA_FILE,
   GROUPS_FILE,
   ROLES_FILE,
+  SESSIONS_FILE,
+  AUDIT_DIR,
+  BACKUPS_DIR,
   PAGES_DIR,
   CONTENT_PREFIX,
   CUSTOM_PAGES_DIR,

@@ -80,6 +80,17 @@ module.exports = {
     ticket_ttl_seconds: parsePositiveInt('EXTERNAL_PROXY_TICKET_TTL_SECONDS', 60, 10, 600),
     session_ttl_minutes: parsePositiveInt('EXTERNAL_PROXY_SESSION_TTL_MINUTES', 480, 1, 10080)
   },
+  security: {
+    // 页面认证 Secret 的静态加密密钥；未配置时从 JWT_SECRET 派生，生产环境建议单独配置。
+    data_encryption_key: process.env.DATA_ENCRYPTION_KEY || '',
+    data_encryption_previous_keys: (process.env.DATA_ENCRYPTION_PREVIOUS_KEYS || '')
+      .split(',').map(value => value.trim()).filter(Boolean)
+  },
+  operations: {
+    audit_retention_days: parsePositiveInt('AUDIT_RETENTION_DAYS', 90, 1, 3650),
+    backup_retention: parsePositiveInt('BACKUP_RETENTION', 10, 1, 100),
+    session_retention_days: parsePositiveInt('SESSION_RETENTION_DAYS', 7, 1, 365)
+  },
   debug: {
     enabled: process.env.DEBUG_MODE === 'true',
     user: {

@@ -176,6 +176,26 @@ https://proxy.example.com/hilbert-proxy/<pageId>/上游路径
 2. **分配邮箱**：将角色绑定到指定邮箱，支持通配符（如 `*@domain.com` 匹配该域名下所有用户）
 3. **超级管理员**：由 `ADMIN_EMAIL` 指定，默认拥有所有权限，无需在 RBAC 中配置
 
+## 可运维性
+
+设置页仅对超级管理员显示以下能力：
+
+- **系统状态**：版本、运行时间、内存、数据目录可写性、页面/RBAC 数量、代理路由、加密状态、审计和会话统计。
+- **代理诊断**：按页面执行真实 DNS、TLS、出站代理和认证链路测试，不返回认证 Secret。
+- **备份恢复**：完整备份页面、分组、RBAC、收藏、Markdown、自定义页面和审计日志；恢复前自动创建安全备份。运行中的会话不会被备份或恢复。
+- **审计日志**：记录登录、设置修改、备份恢复、代理诊断和会话撤销，敏感字段递归脱敏。
+- **会话管理**：JWT 带独立 sid，主站与页面代理会话可查看和撤销；撤销主站会话会级联撤销代理会话并关闭已有 WebSocket。
+
+保留策略通过环境变量配置：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `AUDIT_RETENTION_DAYS` | `90` | 审计日志保留天数 |
+| `BACKUP_RETENTION` | `10` | 自动保留的最近备份数量 |
+| `SESSION_RETENTION_DAYS` | `7` | 已过期/撤销会话记录的额外保留天数 |
+| `DATA_ENCRYPTION_KEY` | 从 JWT 派生 | 页面认证 Secret 主加密密钥 |
+| `DATA_ENCRYPTION_PREVIOUS_KEYS` | 空 | 密钥轮换期间用于解密旧密文的旧密钥列表 |
+
 ## Docker 部署
 
 ```bash
@@ -262,10 +282,13 @@ spec:
 | `data/pages.json` | 页面配置（含认证信息） |
 | `data/groups.json` | 分组列表 |
 | `data/roles.json` | RBAC 角色与邮箱分配 |
+| `data/sessions.json` | 可查看、可撤销的主站及代理会话注册表 |
+| `data/audit/*.jsonl` | 按月轮转的脱敏审计日志 |
+| `data/backups/*.zip` | 手动备份和恢复前安全备份 |
 | `data/pages/*.md` | Markdown 页面正文（每页一个文件） |
 | `data/custom-pages/<id>/` | 自定义页面静态资源目录 |
 
-> ⚠️ 认证账号密码仍以明文保存在 `pages.json` 中，请通过文件系统权限控制访问，不要将该文件提交到仓库或外发。页面 API 只返回 `hasPassword` / `hasClientSecret` 等状态，不会把 Secret 返回浏览器。
+页面认证密码、Header Token 和 OAuth Client Secret 使用 AES-256-GCM 加密后保存在 `pages.json`。生产环境建议设置独立的 `DATA_ENCRYPTION_KEY`；未设置时从 `JWT_SECRET` 派生。轮换密钥时将旧密钥临时加入 `DATA_ENCRYPTION_PREVIOUS_KEYS`，启动后会自动重新加密。页面 API 只返回 `hasPassword` / `hasClientSecret` 等状态，不会把 Secret 返回浏览器。
 
 所有 JSON Repository 使用“同目录临时文件 + fsync + rename”原子写入。每次覆盖前会将上一份合法 JSON 保存为同名 `.bak`；主文件损坏或缺失时会自动从备份恢复。备份文件与主文件包含相同敏感级别的数据，也必须使用相同的文件系统权限保护。
 
@@ -295,6 +318,14 @@ spec:
 | GET | `/hilbert-api/rbac/assignments` | 邮箱-角色分配列表（仅管理员） |
 | POST | `/hilbert-api/rbac/assignments` | 新建分配（仅管理员） |
 | DELETE | `/hilbert-api/rbac/assignments/:email/:roleId` | 删除分配（仅管理员） |
+| GET | `/hilbert-api/ops/status` | 系统、数据、代理、加密和会话状态（仅管理员） |
+| GET | `/hilbert-api/ops/audit` | 查询审计日志（仅管理员） |
+| GET/POST | `/hilbert-api/ops/backups` | 查看或创建完整备份（仅管理员） |
+| GET | `/hilbert-api/ops/backups/:name/download` | 下载备份（仅管理员） |
+| POST | `/hilbert-api/ops/backups/:name/restore` | 恢复备份，确认文本为 RESTORE（仅管理员） |
+| GET | `/hilbert-api/ops/sessions` | 查看活跃主站/代理会话（仅管理员） |
+| POST | `/hilbert-api/ops/sessions/:id/revoke` | 撤销会话及关联代理会话（仅管理员） |
+| POST | `/hilbert-api/ops/diagnostics/pages/:id` | 执行页面代理连通性诊断（仅管理员） |
 | GET | `https://<页面id>.proxy.example.com/.hilbert/session` | 使用一次性票据换取页面 Host-only 会话 |
 | ANY | `https://<页面id>.proxy.example.com/**` | 按 Host 转发外部页面 HTTP/WebSocket 请求 |
 | ANY | `<兼容代理origin>/hilbert-proxy/<页面id>/**` | 未配置 Host 模板时的旧版挂载代理 |

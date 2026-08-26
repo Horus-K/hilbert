@@ -126,6 +126,16 @@ async function rbacApi(path = '', options = {}) {
   return data;
 }
 
+async function opsApi(path = '', options = {}) {
+  const res = await authenticatedFetch('/hilbert-api/ops' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || `请求失败 (${res.status})`);
+  return data;
+}
+
 // ---------- 权限判断 ----------
 function hasPagePermission(pageId, action) {
   if (isAdmin) return true;
@@ -850,7 +860,13 @@ function showSettings() {
   // RBAC 面板：仅管理员可见
   if (isAdmin) {
     $('rbacPanel').classList.remove('hidden');
+    $('opsPanel').classList.remove('hidden');
+    $('diagnosticsPanel').classList.remove('hidden');
+    $('backupsPanel').classList.remove('hidden');
+    $('sessionsPanel').classList.remove('hidden');
+    $('auditPanel').classList.remove('hidden');
     loadAndRenderRbac();
+    loadOperations();
   } else {
     $('rbacPanel').classList.add('hidden');
   }
@@ -858,6 +874,181 @@ function showSettings() {
   updateSidebarTrigger();
   saveViewState();
 }
+
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return value + ' B';
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+  if (value < 1024 * 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + ' MB';
+  return (value / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+async function loadSystemStatus() {
+  try {
+    const status = await opsApi('/status');
+    const items = [
+      ['版本', status.app.version],
+      ['运行时间', Math.floor(status.app.uptimeSeconds / 60) + ' 分钟'],
+      ['Node.js', status.app.node],
+      ['内存 RSS', formatBytes(status.memory.rss)],
+      ['数据目录', status.data.directory],
+      ['数据目录可写', status.data.writable ? '正常' : '异常'],
+      ['页面 / 分组', status.data.pages + ' / ' + status.data.groups],
+      ['角色 / 分配', status.data.roles + ' / ' + status.data.assignments],
+      ['代理路由', status.proxy.routingMode + (status.proxy.hostTemplate ? ' · ' + status.proxy.hostTemplate : '')],
+      ['Secret 加密', status.encryption.enabled ? status.encryption.algorithm + ' · ' + status.encryption.source : '未启用'],
+      ['活跃会话', status.sessions.active + '（主站 ' + status.sessions.mainActive + ' / 代理 ' + status.sessions.proxyActive + '）'],
+      ['备份 / 审计', status.backups.count + ' / ' + formatBytes(status.audit.bytes)]
+    ];
+    $('opsStatusGrid').innerHTML = items.map(([label, value]) =>
+      '<div class="ops-status-item"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(String(value ?? '-')) + '</strong></div>'
+    ).join('');
+  } catch (err) {
+    $('opsStatusGrid').innerHTML = '<div class="rbac-empty">加载失败：' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+function populateDiagnosticPages() {
+  const links = pages.filter(page => page.type === 'link');
+  $('opsDiagnosticPage').innerHTML = links.map(page =>
+    '<option value="' + page.id + '">' + escapeHtml((page.icon || '🔗') + ' ' + page.name) + '</option>'
+  ).join('');
+  $('opsRunDiagnosticBtn').disabled = links.length === 0;
+}
+
+async function runPageDiagnostic() {
+  const pageId = $('opsDiagnosticPage').value;
+  if (!pageId) return;
+  const output = $('opsDiagnosticResult');
+  output.classList.remove('hidden');
+  output.textContent = '诊断中…';
+  try {
+    const res = await authenticatedFetch('/hilbert-api/ops/diagnostics/pages/' + encodeURIComponent(pageId), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json().catch(() => ({}));
+    output.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    output.textContent = '诊断失败：' + err.message;
+  }
+}
+
+async function loadBackups() {
+  try {
+    const backups = await opsApi('/backups');
+    const container = $('opsBackupList');
+    if (!backups.length) {
+      container.innerHTML = '<div class="rbac-empty">暂无备份</div>';
+      return;
+    }
+    container.innerHTML = backups.map(item =>
+      '<div class="ops-row"><div><strong>' + escapeHtml(item.name) + '</strong><small>' +
+      escapeHtml(formatDateTime(item.createdAt) + ' · ' + formatBytes(item.size)) +
+      '</small></div><div class="ops-row-actions">' +
+      '<a class="ghost-btn" href="/hilbert-api/ops/backups/' + encodeURIComponent(item.name) + '/download">下载</a>' +
+      '<button class="ghost-btn ops-restore-backup" data-name="' + escapeHtml(item.name) + '">恢复</button>' +
+      '<button class="danger-btn ops-delete-backup" data-name="' + escapeHtml(item.name) + '">删除</button></div></div>'
+    ).join('');
+    container.querySelectorAll('.ops-restore-backup').forEach(button => button.addEventListener('click', () => restoreBackup(button.dataset.name)));
+    container.querySelectorAll('.ops-delete-backup').forEach(button => button.addEventListener('click', () => deleteBackupFile(button.dataset.name)));
+  } catch (err) { showToast('加载备份失败：' + err.message); }
+}
+
+async function createBackupFile() {
+  try {
+    $('opsCreateBackupBtn').disabled = true;
+    const result = await opsApi('/backups', { method: 'POST', body: '{}' });
+    showToast('备份已创建：' + result.name);
+    await loadBackups();
+  } catch (err) { showToast(err.message); }
+  finally { $('opsCreateBackupBtn').disabled = false; }
+}
+
+async function restoreBackup(name) {
+  const confirmation = prompt('恢复会覆盖当前页面、分组、角色、收藏和自定义文件。\n请输入 RESTORE 继续：');
+  if (confirmation !== 'RESTORE') return;
+  try {
+    const result = await opsApi('/backups/' + encodeURIComponent(name) + '/restore', {
+      method: 'POST', body: JSON.stringify({ confirm: confirmation })
+    });
+    showToast('恢复完成，安全备份：' + result.safetyBackup);
+    [pages, groups] = await Promise.all([api(''), groupsApi()]);
+    renderSidebar(); renderGroupList(); populateDiagnosticPages();
+    await Promise.all([loadSystemStatus(), loadBackups(), loadAndRenderRbac()]);
+  } catch (err) { showToast('恢复失败：' + err.message); }
+}
+
+async function deleteBackupFile(name) {
+  if (!confirm('确定删除备份「' + name + '」吗？')) return;
+  try {
+    await opsApi('/backups/' + encodeURIComponent(name), { method: 'DELETE' });
+    await loadBackups();
+  } catch (err) { showToast(err.message); }
+}
+
+async function loadSessions() {
+  try {
+    const sessions = await opsApi('/sessions');
+    const container = $('opsSessionList');
+    if (!sessions.length) { container.innerHTML = '<div class="rbac-empty">暂无活跃会话</div>'; return; }
+    container.innerHTML = sessions.map(session =>
+      '<div class="ops-row"><div><strong>' + escapeHtml(session.email || '-') +
+      (session.current ? ' <span class="rbac-wildcard-badge">当前</span>' : '') +
+      '</strong><small>' + escapeHtml((session.type === 'proxy' ? '页面代理' : '主站') +
+      (session.pageId ? ' · ' + session.pageId.slice(0, 8) : '') + ' · 最近 ' + formatDateTime(session.lastSeenAt) +
+      ' · 到期 ' + formatDateTime(session.expiresAt) + ' · ' + (session.ip || '-')) + '</small></div>' +
+      '<div class="ops-row-actions"><button class="danger-btn ops-revoke-session" data-id="' + session.id + '">撤销</button></div></div>'
+    ).join('');
+    container.querySelectorAll('.ops-revoke-session').forEach(button => button.addEventListener('click', () => revokeSession(button.dataset.id)));
+  } catch (err) { showToast('加载会话失败：' + err.message); }
+}
+
+async function revokeSession(id) {
+  if (!confirm('确定撤销该会话吗？主会话关联的页面会话也会失效。')) return;
+  try {
+    await opsApi('/sessions/' + encodeURIComponent(id) + '/revoke', { method: 'POST', body: '{}' });
+    await Promise.all([loadSessions(), loadSystemStatus()]);
+  } catch (err) { showToast(err.message); }
+}
+
+async function loadAudit() {
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    const actor = $('opsAuditActor').value.trim();
+    const action = $('opsAuditAction').value.trim();
+    if (actor) params.set('actor', actor);
+    if (action) params.set('action', action);
+    const entries = await opsApi('/audit?' + params.toString());
+    const container = $('opsAuditList');
+    if (!entries.length) { container.innerHTML = '<div class="rbac-empty">暂无审计记录</div>'; return; }
+    container.innerHTML = entries.map(entry =>
+      '<div class="ops-row ops-audit-row"><div><strong>' + escapeHtml(entry.action) +
+      ' <span class="ops-outcome ' + escapeHtml(entry.outcome) + '">' + escapeHtml(entry.outcome) + '</span></strong>' +
+      '<small>' + escapeHtml(formatDateTime(entry.timestamp) + ' · ' + (entry.actor || 'anonymous') + ' · ' + (entry.ip || '-')) +
+      '</small></div><code>' + escapeHtml(entry.resourceId || '') + '</code></div>'
+    ).join('');
+  } catch (err) { showToast('加载审计日志失败：' + err.message); }
+}
+
+function loadOperations() {
+  populateDiagnosticPages();
+  Promise.all([loadSystemStatus(), loadBackups(), loadSessions(), loadAudit()]);
+}
+
+$('opsRefreshStatusBtn').addEventListener('click', loadSystemStatus);
+$('opsRunDiagnosticBtn').addEventListener('click', runPageDiagnostic);
+$('opsCreateBackupBtn').addEventListener('click', createBackupFile);
+$('opsRefreshSessionsBtn').addEventListener('click', loadSessions);
+$('opsRefreshAuditBtn').addEventListener('click', loadAudit);
+$('opsAuditActor').addEventListener('keydown', e => { if (e.key === 'Enter') loadAudit(); });
+$('opsAuditAction').addEventListener('keydown', e => { if (e.key === 'Enter') loadAudit(); });
 
 $('settingsEntry').addEventListener('click', showSettings);
 

@@ -1,17 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const authService = require('../services/auth.service');
+const audit = require('../services/audit.service');
+const { setAuthCookie } = require('../middleware/auth');
 
-// Google 回调：校验 state → 换取 token → 获取用户信息 → 签发 JWT → 写入 Cookie
-// 挂载于 / → 实际路径 /callback
 router.get('/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
-
     if (!authService.verifyStateToken(state)) {
+      audit.record({ req, action: 'auth.google.callback', outcome: 'failure', statusCode: 403, details: { reason: 'invalid_state' } });
       return res.status(403).send('Invalid state parameter');
     }
     if (!code) {
+      audit.record({ req, action: 'auth.google.callback', outcome: 'failure', statusCode: 400, details: { reason: 'missing_code' } });
       return res.status(400).send('Authorization code missing');
     }
 
@@ -22,29 +23,19 @@ router.get('/callback', async (req, res) => {
       user.googleAccessTokenExpiresAt = Date.now() + Number(tokenData.expires_in) * 1000;
     }
 
-    // 登录权限校验
     const denyReason = authService.checkLoginPermission(user.email);
     if (denyReason) {
-      console.warn('Login denied:', denyReason);
+      audit.record({ req, actor: user.email, action: 'auth.google.login', outcome: 'failure', statusCode: 403, details: { reason: denyReason } });
       return res.status(403).send(denyReason);
     }
 
-    // 签发 JWT
-    const token = authService.signJwt(user);
-
-    // 写入 HttpOnly Cookie
-    const isSecure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
-    res.cookie('hilbert_token', token, {
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: authService.GOOGLE_CONFIG.jwt_expire_hours * 60 * 60 * 1000
-    });
-
+    const issued = authService.issueMainSession(user, req);
+    setAuthCookie(req, res, issued.token);
+    audit.record({ req, actor: user.email, sessionId: issued.session.id, action: 'auth.google.login' });
     res.redirect('/');
   } catch (err) {
     console.error('Callback error:', err);
+    audit.record({ req, action: 'auth.google.login', outcome: 'failure', statusCode: 500, details: { error: err.message } });
     res.status(500).send('Authentication failed');
   }
 });

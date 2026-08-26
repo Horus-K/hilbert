@@ -38,6 +38,7 @@ function registerRoutes(app, proxy) {
   app.use('/hilbert-api/pages', require('./pages.routes'));
   app.use('/hilbert-api/groups', require('./groups.routes'));
   app.use('/hilbert-api/favorites', require('./favorites.routes'));
+  app.use('/hilbert-api/ops', require('./ops.routes'));
 
   // 6. 独立页面查看器（每个页面拥有独立浏览器 URL）
   app.use('/page', require('./page.routes'));

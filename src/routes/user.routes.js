@@ -3,6 +3,8 @@ const router = express.Router();
 const { isAdmin, getUserPermissions } = require('../services/rbac.service');
 const { isDebugModeEnabled } = require('../services/auth.service');
 const { isHostRoutingEnabled } = require('../utils/proxy-origin');
+const sessionRegistry = require('../services/session-registry.service');
+const audit = require('../services/audit.service');
 
 // 当前登录用户信息
 // 挂载于 /hilbert-api → 实际路径 /hilbert-api/me

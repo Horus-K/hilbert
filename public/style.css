@@ -974,7 +974,20 @@ body.sidebar-pinned .sidebar-trigger {
 }
 
 @media (min-width: 721px) {
-  .modal:has(#authField:not(.hidden)) { width: 760px; }
+  .page-modal {
+    width: 760px;
+    height: min(680px, calc(100vh - 40px));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .page-modal #pageForm {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
 
   #pageForm:has(#authField:not(.hidden)) {
     display: grid;
@@ -982,7 +995,7 @@ body.sidebar-pinned .sidebar-trigger {
     column-gap: 16px;
   }
 
-  #pageForm:has(#authField:not(.hidden)) > :first-child,
+  #pageForm:has(#authField:not(.hidden)) > #typeField,
   #pageForm:has(#authField:not(.hidden)) > #authField,
   #pageForm:has(#authField:not(.hidden)) > #customFileField,
   #pageForm:has(#authField:not(.hidden)) > .form-row,

@@ -210,7 +210,7 @@
 
   <!-- 新增/编辑弹窗 -->
   <div class="modal-overlay hidden" id="modalOverlay">
-    <div class="modal">
+    <div class="modal page-modal">
       <div class="modal-header">
         <h3 id="modalTitle">新建页面</h3>
         <button class="icon-btn" id="modalClose" title="关闭">
@@ -218,7 +218,22 @@
         </button>
       </div>
       <form id="pageForm">
-        <div class="form-item">
+        <div class="form-row">
+          <div class="form-item">
+            <label>页面名称 <span class="required">*</span></label>
+            <input type="text" id="fieldName" placeholder="例如：监控面板" maxlength="40" required />
+          </div>
+          <div class="form-item">
+            <label>Logo 网址</label>
+            <input type="url" id="fieldLogoUrl" placeholder="留空则自动识别 /favicon.ico" />
+            <p class="form-hint">支持 http/https 图片；获取失败时使用默认图标</p>
+          </div>
+          <div class="form-item">
+            <label>分组</label>
+            <select id="fieldGroup"></select>
+          </div>
+        </div>
+        <div class="form-item" id="typeField">
           <label>页面类型</label>
           <div class="type-switch" id="typeSwitch">
             <button type="button" class="type-opt active" data-type="link">🔗 外部链接</button>
@@ -227,10 +242,6 @@
             <button type="button" class="type-opt" data-type="markdown">📝 Markdown</button>
             <button type="button" class="type-opt" data-type="custom">🖥️ 自定义</button>
           </div>
-        </div>
-        <div class="form-item">
-          <label>页面名称 <span class="required">*</span></label>
-          <input type="text" id="fieldName" placeholder="例如：监控面板" maxlength="40" required />
         </div>
         <div class="form-item" id="urlField">
           <label>嵌入链接 <span class="required">*</span></label>
@@ -337,17 +348,6 @@
           </div>
           <ul class="modal-file-list" id="modalFileList"></ul>
           <p class="form-hint">新建时需先保存页面配置，再上传文件；编辑时可随时管理文件</p>
-        </div>
-        <div class="form-row">
-          <div class="form-item">
-            <label>Logo 网址</label>
-            <input type="url" id="fieldLogoUrl" placeholder="留空则自动识别 /favicon.ico" />
-            <p class="form-hint">支持 http/https 图片；获取失败时使用默认图标</p>
-          </div>
-          <div class="form-item">
-            <label>分组</label>
-            <select id="fieldGroup"></select>
-          </div>
         </div>
         <div class="form-error hidden" id="formError"></div>
         <div class="form-actions">

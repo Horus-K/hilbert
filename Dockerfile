@@ -12,20 +12,22 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM node:24.19.0-alpine
 
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    EXTERNAL_PROXY_PORT=3001
 
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json server.js ./
+COPY package.json server.js config.js ./
 COPY public ./public
+COPY src ./src
 
 # 数据目录：页面/分组配置、Markdown 文档与自定义页面资源，运行时通过卷挂载持久化
 RUN mkdir -p /app/data /app/data/custom-pages && chown -R node:node /app
 VOLUME ["/app/data"]
 
 USER node
-EXPOSE 3000
+EXPOSE 3000 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:${PORT}/hilbert-api/health || exit 1

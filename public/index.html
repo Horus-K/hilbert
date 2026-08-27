@@ -3,29 +3,58 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hilbert 控制台</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css" />
+  <title>Hilbert Space</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/vendor/vditor/dist/index.css" />
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="app">
     <!-- 左侧边栏 -->
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar collapsed" id="sidebar">
       <div class="sidebar-header">
         <div class="logo">
           <div class="logo-mark">H</div>
-          <span class="logo-text">Hilbert 控制台</span>
+          <span class="logo-text">Hilbert Space</span>
           <span class="version-badge" id="versionBadge"></span>
         </div>
-        <button class="icon-btn" id="toggleSidebar" title="收起侧边栏">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        <button class="sidebar-pin-btn" id="sidebarPinBtn" title="侧边栏常驻">
+          <svg class="pin-icon-pinned" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-5 7h-2l-5-7h4z"/></svg>
+          <svg class="pin-icon-unpinned" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-5 7h-2l-5-7h4z" opacity="0.4"/></svg>
         </button>
       </div>
 
-      <button class="new-page-btn" id="newPageBtn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        新建页面
-      </button>
+      <div class="sidebar-actions">
+        <button class="new-page-btn" id="newPageBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建页面
+        </button>
+        <button class="new-page-btn" id="searchPageBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/></svg>
+          搜索
+        </button>
+      </div>
+      <div class="page-search hidden" id="pageSearch">
+        <input id="pageSearchInput" type="search" placeholder="搜索页面名称" aria-label="搜索页面名称" />
+      </div>
+
+      <!-- 收藏区域 -->
+      <div class="favorites-section" id="favoritesSection">
+        <div class="favorites-title">
+          <span>⭐ 收藏</span>
+          <span class="favorites-count" id="favoritesCount"></span>
+        </div>
+        <div class="favorites-list" id="favoritesList"><!-- 动态渲染 --></div>
+      </div>
+
+      <!-- 置顶区域 -->
+      <div class="pinned-section hidden" id="pinnedSection">
+        <div class="pinned-title">
+          <span>📌 置顶</span>
+          <span class="pinned-count" id="pinnedCount"></span>
+        </div>
+        <div class="pinned-list" id="pinnedList"><!-- 动态渲染 --></div>
+      </div>
 
       <nav class="page-list" id="pageList"><!-- 动态渲染 --></nav>
 
@@ -33,50 +62,39 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         <span>设置</span>
         <span class="settings-spacer"></span>
-        <span class="refresh-btn" id="refreshBtn" title="清除浏览器缓存并重新加载">
+        <span class="refresh-btn" id="refreshBtn" title="清除资源缓存并重新加载（保留界面偏好）">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </span>
       </button>
 
       <div class="sidebar-footer">
         <div class="user-chip">
-          <div class="avatar">A</div>
-          <span>Admin</span>
+          <img class="avatar-img" id="userAvatar" src="" alt="" />
+          <div class="user-info">
+            <span class="user-name" id="userName">Admin</span>
+            <span class="user-display-name hidden" id="userDisplayName"></span>
+            <span class="user-email" id="userEmail"></span>
+            <span class="user-groups hidden" id="userGroups"></span>
+          </div>
+          <button class="logout-btn" id="logoutBtn" title="登出">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
         </div>
       </div>
     </aside>
 
-    <!-- 侧边栏收起时的展开按钮 -->
-    <button class="icon-btn expand-btn hidden" id="expandSidebar" title="展开侧边栏">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-    </button>
+    <!-- 侧边栏 hover 触发区域 -->
+    <div class="sidebar-trigger" id="sidebarTrigger"></div>
 
     <!-- 右侧内容区 -->
     <main class="main">
-      <header class="topbar">
-        <div class="topbar-title">
-          <span class="topbar-icon" id="topbarIcon">📊</span>
-          <span id="topbarName">加载中…</span>
-        </div>
-        <div class="topbar-actions">
-          <button class="ghost-btn hidden" id="editCancelBtn">取消</button>
-          <button class="primary-btn hidden" id="editSaveBtn">保存</button>
-          <button class="ghost-btn hidden" id="editToggleBtn" title="编辑文档">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-            编辑
-          </button>
-          <button class="ghost-btn hidden" id="reloadBtn" title="刷新">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            刷新
-          </button>
-          <a class="ghost-btn" id="openExternalBtn" target="_blank" rel="noopener" title="在新标签页打开">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            打开
-          </a>
-        </div>
-      </header>
-
+      <!-- 标签栏 -->
+      <div class="tab-bar" id="tabBar">
+        <div class="tab-list" id="tabList"></div>
+      </div>
       <section class="content">
+        <!-- 标签面板容器（每个 iframe/custom 标签独立面板，保持在 DOM 中以保留状态） -->
+        <div class="tab-panels" id="tabPanels"></div>
         <div class="iframe-wrap hidden" id="iframeWrap">
           <div class="loading-mask" id="loadingMask">
             <div class="spinner"></div>
@@ -87,8 +105,30 @@
 
         <!-- Markdown 文档渲染 / 编辑区 -->
         <div class="md-view hidden" id="mdView">
+          <div class="md-toolbar" id="mdToolbar">
+            <div class="md-toolbar-left">
+              <span class="md-toolbar-icon" id="mdToolbarIcon"></span>
+              <span class="md-toolbar-title" id="mdToolbarTitle"></span>
+            </div>
+            <div class="md-toolbar-right">
+              <button class="md-toolbar-btn" id="mdEditBtn" title="编辑文档">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                编辑
+              </button>
+              <button class="md-toolbar-btn md-toolbar-btn-primary hidden" id="mdSaveBtn" title="Ctrl+S 保存">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                保存
+              </button>
+              <button class="md-toolbar-btn hidden" id="mdCancelBtn" title="放弃修改">
+                取消
+              </button>
+              <button class="md-toolbar-btn md-close-btn hidden" id="mdCloseBtn" title="关闭文档">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
           <article class="md-body" id="mdBody"></article>
-          <textarea class="md-editor hidden" id="mdEditor" placeholder="在这里输入 Markdown 内容…（Ctrl+S 保存）" spellcheck="false"></textarea>
+          <div class="md-editor hidden" id="mdEditor"></div>
         </div>
 
         <!-- 自定义页面：iframe 预览 -->
@@ -101,7 +141,7 @@
         <!-- 欢迎页（默认起始页） -->
         <div class="welcome-view" id="welcomeView">
           <div class="welcome-logo">H</div>
-          <h1>欢迎使用 Hilbert 控制台</h1>
+          <h1>欢迎使用 Hilbert Space</h1>
           <p>从左侧边栏选择一个页面查看，或新建一个页面开始使用</p>
           <div class="welcome-actions">
             <button class="primary-btn" id="welcomeNewBtn">＋ 新建页面</button>
@@ -113,13 +153,55 @@
         <div class="settings-view hidden" id="settingsView">
           <div class="settings-card">
             <h2>分组管理</h2>
-            <p class="settings-desc">分组用于整理左侧边栏中的页面，新建 / 编辑页面时可直接选择分组。删除分组后，其下页面会移至「未分组」。</p>
+            <p class="settings-desc">分组用于整理左侧边栏中的页面，新建 / 编辑页面时可直接选择分组。支持拖拽排序和双击编辑名称。删除分组后，其下页面会移至「未分组」。</p>
             <div class="group-add">
               <input type="text" id="newGroupName" placeholder="输入分组名称" maxlength="20" />
               <button class="primary-btn" id="addGroupBtn">添加分组</button>
             </div>
             <div class="form-error hidden" id="groupError"></div>
             <ul class="group-list" id="groupList"></ul>
+          </div>
+
+          <div class="settings-card hidden" id="rbacPanel">
+            <h2>🔐 权限管理</h2>
+            <p class="settings-desc">基于角色的访问控制（RBAC）：创建角色并分配页面权限，然后将角色绑定到用户邮箱。超级管理员拥有所有权限。</p>
+            <div class="rbac-section">
+              <div class="rbac-section-header"><h3>角色列表</h3><button class="primary-btn" id="rbacNewRoleBtn">＋ 新建角色</button></div>
+              <div class="rbac-role-list" id="rbacRoleList"></div>
+            </div>
+            <div class="rbac-section">
+              <div class="rbac-section-header"><h3>邮箱分配</h3><button class="primary-btn" id="rbacNewAssignBtn">＋ 分配角色</button></div>
+              <div class="rbac-assign-list" id="rbacAssignList"></div>
+              <p class="rbac-admin-hint" id="rbacAdminHint" style="display:none">💡 超级管理员的权限不受任何分配影响，始终拥有所有页面的全部权限</p>
+            </div>
+          </div>
+
+          <div class="settings-card hidden" id="opsPanel">
+            <div class="rbac-section-header"><div><h2>🛠️ 系统状态</h2><p class="settings-desc">运行状态、数据存储、代理、加密和会话概览。</p></div><button class="ghost-btn" id="opsRefreshStatusBtn">刷新</button></div>
+            <div class="ops-status-grid" id="opsStatusGrid"></div>
+          </div>
+
+          <div class="settings-card hidden" id="diagnosticsPanel">
+            <h2>🩺 代理诊断</h2>
+            <p class="settings-desc">使用服务端真实代理、DNS 覆盖和页面认证配置测试上游连通性。</p>
+            <div class="ops-toolbar"><select id="opsDiagnosticPage"></select><button class="primary-btn" id="opsRunDiagnosticBtn">开始诊断</button></div>
+            <pre class="ops-result hidden" id="opsDiagnosticResult"></pre>
+          </div>
+
+          <div class="settings-card hidden" id="backupsPanel">
+            <div class="rbac-section-header"><div><h2>💾 备份与恢复</h2><p class="settings-desc">创建完整数据备份；恢复前会自动创建安全备份。</p></div><div class="ops-header-actions"><input class="hidden" id="opsBackupUploadInput" type="file" accept=".zip,application/zip" /><button class="ghost-btn" id="opsUploadRestoreBtn">上传并恢复</button><button class="primary-btn" id="opsCreateBackupBtn">创建备份</button></div></div>
+            <div class="ops-list" id="opsBackupList"></div>
+          </div>
+
+          <div class="settings-card hidden" id="sessionsPanel">
+            <div class="rbac-section-header"><div><h2>🖥️ 活跃会话</h2><p class="settings-desc">查看主站和页面代理会话，撤销主会话时会同时撤销其页面会话。</p></div><button class="ghost-btn" id="opsRefreshSessionsBtn">刷新</button></div>
+            <div class="ops-list" id="opsSessionList"></div>
+          </div>
+
+          <div class="settings-card hidden" id="auditPanel">
+            <div class="rbac-section-header"><div><h2>📜 审计日志</h2><p class="settings-desc">记录设置修改、备份恢复、诊断、登录和会话撤销操作。</p></div><button class="ghost-btn" id="opsRefreshAuditBtn">刷新</button></div>
+            <div class="ops-toolbar"><input id="opsAuditActor" placeholder="操作者邮箱" /><input id="opsAuditAction" placeholder="操作，如 backup" /></div>
+            <div class="ops-list ops-audit-list" id="opsAuditList"></div>
           </div>
         </div>
       </section>
@@ -128,7 +210,7 @@
 
   <!-- 新增/编辑弹窗 -->
   <div class="modal-overlay hidden" id="modalOverlay">
-    <div class="modal">
+    <div class="modal page-modal">
       <div class="modal-header">
         <h3 id="modalTitle">新建页面</h3>
         <button class="icon-btn" id="modalClose" title="关闭">
@@ -136,29 +218,69 @@
         </button>
       </div>
       <form id="pageForm">
-        <div class="form-item">
+        <div class="form-row">
+          <div class="form-item">
+            <label>页面名称 <span class="required">*</span></label>
+            <input type="text" id="fieldName" placeholder="例如：监控面板" maxlength="40" required />
+          </div>
+          <div class="form-item">
+            <label>Logo 网址</label>
+            <input type="url" id="fieldLogoUrl" placeholder="留空则自动识别 /favicon.ico" />
+            <p class="form-hint">支持 http/https 图片；获取失败时使用默认图标</p>
+          </div>
+          <div class="form-item">
+            <label>分组</label>
+            <select id="fieldGroup"></select>
+          </div>
+        </div>
+        <div class="form-item" id="typeField">
           <label>页面类型</label>
           <div class="type-switch" id="typeSwitch">
             <button type="button" class="type-opt active" data-type="link">🔗 外部链接</button>
-            <button type="button" class="type-opt" data-type="markdown">📝 Markdown 文档</button>
-            <button type="button" class="type-opt" data-type="custom">🖥️ 自定义页面</button>
+            <button type="button" class="type-opt" data-type="iframe">🖼️ 直接嵌入</button>
+            <button type="button" class="type-opt" data-type="direct">↗️ 直链</button>
+            <button type="button" class="type-opt" data-type="markdown">📝 Markdown</button>
+            <button type="button" class="type-opt" data-type="custom">🖥️ 自定义</button>
           </div>
-        </div>
-        <div class="form-item">
-          <label>页面名称 <span class="required">*</span></label>
-          <input type="text" id="fieldName" placeholder="例如：Grafana 监控面板" maxlength="40" required />
         </div>
         <div class="form-item" id="urlField">
           <label>嵌入链接 <span class="required">*</span></label>
           <input type="url" id="fieldUrl" placeholder="https://example.com/..." required />
         </div>
+        <div class="form-item hidden" id="resolveIpField">
+          <label>DNS 解析 IP</label>
+          <input type="text" id="fieldResolveIp" placeholder="如 10.99.97.104（留空则走正常 DNS 解析）" />
+          <p class="form-hint">指定域名解析到的 IP 地址，代理将直接连接该 IP 而非通过 DNS 解析。适用于内网服务或域名尚未解析的场景</p>
+        </div>
+        <div class="form-item hidden" id="sessionModeField">
+          <label>会话 Cookie</label>
+          <select id="fieldSessionMode">
+            <option value="server">服务端保管（自动认证）</option>
+            <option value="browser">浏览器保管（手动登录）</option>
+          </select>
+          <p class="form-hint">浏览器模式仅用于逐页面子域名，可支持 document.cookie 和人工登录</p>
+        </div>
+        <div class="form-item hidden" id="originsField">
+          <label>关联 origin</label>
+          <textarea id="fieldOrigins" rows="3" placeholder="api=https://api.example.com&#10;login=https://login.example.com"></textarea>
+          <p class="form-hint">每行 alias=https://origin，仅在逐页面子域名模式使用</p>
+        </div>
+        <div class="form-item hidden" id="authOriginsField">
+          <label>转发页面认证到关联 origin</label>
+          <input type="text" id="fieldAuthOrigins" placeholder="api,login（默认不向关联 origin 发送凭据）" />
+          <p class="form-hint">仅填写确实信任且需要共享 Basic/Header/Identity/OAuth 凭据的 alias</p>
+        </div>
         <div class="form-item hidden" id="proxyModeField">
           <label>代理模式</label>
           <select id="fieldProxyMode">
-            <option value="identity">恒等映射（默认，直接用目标 URL 路径作为代理入口）</option>
-            <option value="mount">挂载 /hilbert-proxy/&lt;页面id&gt;（根路径站点或恒等映射异常时选用）</option>
+            <option value="mount">隔离挂载</option>
           </select>
-          <p class="form-hint" id="proxyModeHint">恒等映射 URL 更简洁；若站点 URL 没有路径（如 https://notes.example.com/），需选择挂载模式</p>
+          <p class="form-hint" id="proxyModeHint">代理路由由服务端部署配置决定（逐页面子域名或兼容挂载路径）</p>
+        </div>
+        <div class="form-item hidden" id="mountPathField">
+          <label>挂载路径</label>
+          <input type="text" id="fieldMountPath" placeholder="留空则使用 /hilbert-proxy/&lt;页面id&gt;" />
+          <p class="form-hint">仅旧版共享代理 origin 模式使用；逐页面通配子域名模式会忽略此项</p>
         </div>
         <div class="form-item hidden" id="authField">
           <label class="checkbox-label">
@@ -168,8 +290,10 @@
           <div class="auth-box hidden" id="authBox">
             <select id="authMode">
               <option value="basic">Basic Auth（Authorization 头）</option>
-              <option value="login">表单登录（用户名密码登录，如 Grafana）</option>
+              <option value="login">表单登录（用户名密码换取会话 Cookie）</option>
+              <option value="oauth">OAuth 2.0 客户端凭证</option>
               <option value="header">自定义请求头（如 Bearer 令牌）</option>
+              <option value="identity">当前用户身份请求头</option>
             </select>
             <div class="auth-inputs" id="authUserPass">
               <input type="text" id="authUser" placeholder="用户名" autocomplete="off" />
@@ -178,8 +302,8 @@
             <input type="text" class="auth-login-path hidden" id="authLoginPath" placeholder="登录接口路径（默认 /login）" />
             <div class="auth-login-opts hidden" id="authLoginOpts">
               <select id="authLoginFormat" title="登录请求体格式">
-                <option value="json">登录请求格式：JSON（如 Grafana）</option>
-                <option value="form">登录请求格式：表单（如 XXL-JOB）</option>
+                <option value="json">登录请求格式：JSON</option>
+                <option value="form">登录请求格式：表单</option>
               </select>
               <div class="auth-inputs">
                 <input type="text" id="authUserField" placeholder="用户名字段名（默认 user）" autocomplete="off" />
@@ -189,6 +313,29 @@
             <div class="auth-inputs hidden" id="authHeaderInputs">
               <input type="text" id="authHeaderName" placeholder="请求头名称，如 Authorization" />
               <input type="text" id="authHeaderValue" placeholder="请求头值，如 Bearer xxx" />
+            </div>
+            <div class="auth-login-opts hidden" id="authIdentityFields">
+              <input type="text" id="authUserHeader" placeholder="身份请求头名（默认 X-Forwarded-User）" autocomplete="off" />
+              <input type="text" id="authEmailHeader" placeholder="邮箱请求头名（默认 X-Forwarded-Mail）" autocomplete="off" />
+              <input type="text" id="authDisplayNameHeader" placeholder="显示名请求头名（默认 X-Forwarded-DisplayName）" autocomplete="off" />
+              <input type="text" id="authGroupsHeader" placeholder="用户组请求头名（默认 X-Forwarded-Groups）" autocomplete="off" />
+              <label class="checkbox-label">
+                <input type="checkbox" id="authForwardGoogleAuth" />
+                透传完整 Google 用户资料（不包含 OAuth Token）
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="authForwardGoogleAccessToken" />
+                透传 Google access_token（高风险，不包含 refresh_token）
+              </label>
+              <p class="form-hint">将当前登录用户的邮箱、显示名和用户组透传给目标站，要求目标站只能通过本服务访问（防伪造）</p>
+            </div>
+            <div class="hidden" id="authOAuthFields">
+              <input type="text" id="authTokenUrl" placeholder="令牌端点 URL（如 https://example.com/oauth/tokens）" autocomplete="off" />
+              <div class="auth-inputs">
+                <input type="text" id="authClientId" placeholder="Client ID" autocomplete="off" />
+                <input type="password" id="authClientSecret" placeholder="Client Secret" autocomplete="new-password" />
+              </div>
+              <input type="text" id="authScope" placeholder="Scope（可选，如 PRINCIPAL_ROLE:ALL）" autocomplete="off" />
             </div>
           </div>
           <p class="form-hint">启用后页面将通过本地反向代理加载并自动携带认证，同时绕过目标站的 iframe 嵌入限制</p>
@@ -201,16 +348,6 @@
           </div>
           <ul class="modal-file-list" id="modalFileList"></ul>
           <p class="form-hint">新建时需先保存页面配置，再上传文件；编辑时可随时管理文件</p>
-        </div>
-        <div class="form-row">
-          <div class="form-item">
-            <label>图标（emoji）</label>
-            <input type="text" id="fieldIcon" placeholder="📊" maxlength="4" />
-          </div>
-          <div class="form-item">
-            <label>分组</label>
-            <select id="fieldGroup"></select>
-          </div>
         </div>
         <div class="form-error hidden" id="formError"></div>
         <div class="form-actions">
@@ -233,9 +370,77 @@
     </div>
   </div>
 
+  <!-- RBAC 角色编辑弹窗 -->
+  <div class="modal-overlay hidden" id="rbacRoleModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3 id="rbacRoleModalTitle">新建角色</h3>
+        <button class="icon-btn" id="rbacRoleModalClose" title="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="rbac-role-form">
+        <div class="form-item">
+          <label>角色名称 <span class="required">*</span></label>
+          <input type="text" id="rbacRoleName" placeholder="例如：访客、编辑者" maxlength="20" />
+        </div>
+        <div class="form-item">
+          <label>角色描述</label>
+          <input type="text" id="rbacRoleDesc" placeholder="可选的角色描述" maxlength="60" />
+        </div>
+        <div class="form-item">
+          <label>页面权限</label>
+          <p class="form-hint">勾选每个页面对应的查看、修改、删除权限。「新增页面」为独立的全局开关。</p>
+          <div class="rbac-perm-header">
+            <label class="checkbox-label"><input type="checkbox" id="rbacPermAll" /> 全部页面</label>
+            <label class="checkbox-label rbac-perm-create-toggle"><input type="checkbox" id="rbacPermCreate" /> 新增页面</label>
+          </div>
+          <div class="rbac-perm-table" id="rbacPermTable"><!-- 动态渲染 --></div>
+        </div>
+        <div class="form-error hidden" id="rbacRoleError"></div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="rbacRoleCancelBtn">取消</button>
+          <button type="button" class="primary-btn" id="rbacRoleSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RBAC 邮箱分配弹窗 -->
+  <div class="modal-overlay hidden" id="rbacAssignModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>分配角色给用户</h3>
+        <button class="icon-btn" id="rbacAssignModalClose" title="关闭">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="rbac-assign-form">
+        <div class="form-item">
+          <label>用户邮箱 <span class="required">*</span></label>
+          <input type="text" id="rbacAssignEmail" placeholder="user@abel.ai 或 *@domain.com（通配符）" />
+          <p class="form-hint">支持通配符，如 <code>*@domain.com</code> 匹配该域名下所有用户</p>
+        </div>
+        <div class="form-item">
+          <label>选择角色 <span class="required">*</span></label>
+          <select id="rbacAssignRole"></select>
+        </div>
+        <div class="form-error hidden" id="rbacAssignError"></div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="rbacAssignCancelBtn">取消</button>
+          <button type="button" class="primary-btn" id="rbacAssignSaveBtn">分配</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
-  <script src="vendor/marked.min.js"></script>
-  <script src="app.js"></script>
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/dompurify/purify.min.js"></script>
+  <script src="/vendor/vditor/dist/index.min.js"></script>
+  <script src="/page-search.js"></script>
+  <script src="/page-logo.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

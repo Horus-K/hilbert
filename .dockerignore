@@ -5,3 +5,5 @@ data
 *.md
 Dockerfile
 .dockerignore
+.env
+.env.example

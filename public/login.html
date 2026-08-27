@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hilbert - 登录</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Söhne", "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at 50% 0%, #e4f6ef 0, #f7f7f8 38%, #fff 72%);
+      color: #202123;
+      padding: 24px;
+    }
+
+    .login-card {
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(32, 33, 35, 0.1);
+      border-radius: 18px;
+      padding: 44px 40px 38px;
+      text-align: center;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 24px 70px rgba(32, 33, 35, 0.14);
+    }
+
+    .logo {
+      width: 54px;
+      height: 54px;
+      margin: 0 auto 18px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: #202123;
+      font-size: 25px;
+      box-shadow: 0 8px 18px rgba(32, 33, 35, 0.16);
+    }
+
+    .title {
+      font-size: 28px;
+      font-weight: 650;
+      margin-bottom: 8px;
+      color: #202123;
+      letter-spacing: -0.045em;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #6b6b73;
+      margin-bottom: 36px;
+    }
+
+    .google-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 12px 28px;
+      background: #202123;
+      color: #fff;
+      border: 1px solid #202123;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      box-shadow: 0 2px 4px rgba(32, 33, 35, 0.14);
+    }
+
+    .google-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 7px 16px rgba(32, 33, 35, 0.2);
+      background: #38383b;
+    }
+
+    .google-btn:active {
+      transform: translateY(0);
+    }
+
+    .google-btn svg {
+      flex-shrink: 0;
+    }
+
+    .google-btn.debug {
+      width: 100%;
+      background: #10a37f;
+      border-color: #10a37f;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .google-btn.debug:hover {
+      background: #0d8d6d;
+    }
+
+    .debug-panel {
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: #f0faf6;
+      border: 1px solid #bce4d7;
+      text-align: left;
+    }
+
+    .debug-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+      background: #d9f2e9;
+      color: #08775b;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .debug-text {
+      font-size: 13px;
+      line-height: 1.7;
+      color: #4f5d58;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 28px 0;
+      color: #9a9aa1;
+      font-size: 12px;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e4e4e6;
+    }
+
+    .info {
+      font-size: 12px;
+      color: #85858d;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo">🔐</div>
+    <h1 class="title">Hilbert</h1>
+    <p class="subtitle" id="subtitle">请使用 Google 账号登录以继续</p>
+
+    <div class="debug-panel" id="debugPanel" style="display:none;">
+      <div class="debug-badge">Debug Mode</div>
+      <div class="debug-text" id="debugUserInfo"></div>
+    </div>
+
+    <a href="/auth/google" class="google-btn" id="loginButton">
+      <svg width="20" height="20" viewBox="0 0 48 48">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.84l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+      </svg>
+      使用 Google 账号登录
+    </a>
+
+    <div class="divider" id="divider">SECURED BY GOOGLE SSO</div>
+    <p class="info" id="info">登录即表示你同意使用 Google 账号进行身份验证<br>仅限授权用户访问</p>
+  </div>
+  <script>
+    async function initLoginPage() {
+      try {
+        const res = await fetch('/auth/config', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.debugMode || !data.debugUser) return;
+
+        const loginButton = document.getElementById('loginButton');
+        const subtitle = document.getElementById('subtitle');
+        const divider = document.getElementById('divider');
+        const info = document.getElementById('info');
+        const debugPanel = document.getElementById('debugPanel');
+        const debugUserInfo = document.getElementById('debugUserInfo');
+        const groups = Array.isArray(data.debugUser.groups) && data.debugUser.groups.length
+          ? data.debugUser.groups.join(', ')
+          : '无';
+
+        subtitle.textContent = 'Debug 模式已开启，将跳过 Google OAuth 直接登录';
+        loginButton.href = '/auth/debug';
+        loginButton.classList.add('debug');
+        loginButton.innerHTML = '以 Debug 用户身份直接登录';
+        divider.textContent = 'DEBUG AUTH BYPASS';
+        info.innerHTML = '当前环境已启用调试登录，仅建议本地开发使用<br>关闭 DEBUG_MODE 后恢复 Google SSO';
+        debugUserInfo.innerHTML =
+          '用户：' + (data.debugUser.displayName || data.debugUser.name || '-') + '<br>' +
+          '邮箱：' + (data.debugUser.email || '-') + '<br>' +
+          '分组：' + groups;
+        debugPanel.style.display = 'block';
+
+        window.location.replace('/auth/debug');
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    initLoginPage();
+  </script>
+</body>
+</html>

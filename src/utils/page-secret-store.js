@@ -21,6 +21,13 @@ function transformAuth(auth, transform) {
   for (const field of fields) {
     if (result[field] !== undefined) result[field] = transform(result[field]);
   }
+  for (const field of ['extraParams', 'headers', 'params']) {
+    if (result[field] && typeof result[field] === 'object') {
+      result[field] = Object.fromEntries(
+        Object.entries(result[field]).map(([key, value]) => [key, transform(value)])
+      );
+    }
+  }
   return result;
 }
 
@@ -44,6 +51,11 @@ function secretValues(pages) {
     for (const field of (SECRET_FIELD_BY_MODE[mode] || [])) {
       const value = page.auth[field];
       if (value !== undefined && value !== null && value !== '') values.push(value);
+    }
+    for (const field of ['extraParams', 'headers', 'params']) {
+      if (page.auth[field] && typeof page.auth[field] === 'object') {
+        values.push(...Object.values(page.auth[field]).filter(value => value !== null && value !== ''));
+      }
     }
   }
   return values;

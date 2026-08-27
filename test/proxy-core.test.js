@@ -301,6 +301,150 @@ test('认证配置支持通用 claim 映射和状态码策略', () => {
   assert.deepEqual(login.expiredStatuses, [401, 419]);
 });
 
+test('认证配置保留登录和 OAuth 附加参数，并校验多请求头', () => {
+  const login = normalizeAuth({
+    mode: 'login', username: 'u', password: 'p',
+    extraParams: { tenant: 'acme', user: 'override' }
+  });
+  assert.deepEqual(login.extraParams, { tenant: 'acme', user: 'override' });
+
+  const oauth = normalizeAuth({
+    mode: 'oauth', tokenUrl: 'https://id.test/token', clientId: 'client', clientSecret: 'secret',
+    extraParams: { audience: 'api', grant_type: 'password' }
+  });
+  assert.deepEqual(oauth.extraParams, { audience: 'api', grant_type: 'password' });
+
+  assert.deepEqual(normalizeAuth({
+    mode: 'header', headers: { Authorization: 'Bearer token', 'X-Tenant': 'acme' }
+  }), {
+    mode: 'header', headers: { Authorization: 'Bearer token', 'X-Tenant': 'acme' }
+  });
+  assert.equal(normalizeAuth({ mode: 'header', headers: { 'Bad Header': 'value' } }), undefined);
+  assert.equal(normalizeAuth({ mode: 'header', headers: { Good: 'line\nbreak' } }), undefined);
+  assert.equal(normalizeAuth({
+    mode: 'header', headers: { Authorization: 'first', authorization: 'second' }
+  }), undefined);
+
+  const kvLogin = normalizeAuth({
+    mode: 'login', loginPath: '/session', loginFormat: 'json',
+    params: { account: 'alice', secret: 'password' }
+  });
+  assert.deepEqual(kvLogin, {
+    mode: 'login', loginPath: '/session', loginFormat: 'json',
+    params: { account: 'alice', secret: 'password' }
+  });
+  assert.deepEqual(normalizeAuth({ mode: 'login', params: {} }), {
+    mode: 'login', loginPath: '/login', loginFormat: 'json', params: {}
+  });
+});
+
+test('自定义请求头模式注入所有 KV', async () => {
+  const headers = {};
+  await applyAuthHeaders({
+    id: 'multi-header-page',
+    url: 'https://example.test/',
+    auth: { mode: 'header', headers: { Authorization: 'Bearer token', 'X-Tenant': 'acme' } }
+  }, headers, { sub: 'user' }, new URL('https://example.test/'));
+  assert.equal(headers.authorization, 'Bearer token');
+  assert.equal(headers['x-tenant'], 'acme');
+});
+
+test('表单登录附加参数覆盖内置字段', async () => {
+  let receivedBody;
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      receivedBody = Buffer.concat(chunks).toString();
+      res.writeHead(200, { 'set-cookie': 'sid=login; Path=/' });
+      res.end('{}');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${upstream.address().port}`;
+  const page = {
+    id: 'login-kv-page', url: origin + '/',
+    auth: {
+      mode: 'login', username: 'original', password: 'password',
+      userField: 'user', passwordField: 'password', loginPath: '/login', loginFormat: 'json',
+      extraParams: { user: 'override', tenant: 'acme' }
+    }
+  };
+  try {
+    await applyAuthHeaders(page, {}, { sub: 'login-kv-user' }, new URL(origin + '/'));
+    assert.deepEqual(JSON.parse(receivedBody), {
+      user: 'override', password: 'password', tenant: 'acme'
+    });
+  } finally {
+    await new Promise(resolve => upstream.close(resolve));
+    clearCookieJar(page.id);
+  }
+});
+
+test('表单登录请求体完全由可编辑 KV 决定', async () => {
+  let receivedBody;
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      receivedBody = Buffer.concat(chunks).toString();
+      res.writeHead(200, { 'set-cookie': 'sid=kv-login; Path=/' });
+      res.end('{}');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${upstream.address().port}`;
+  const page = {
+    id: 'freeform-login-page', url: origin + '/',
+    auth: {
+      mode: 'login', loginPath: '/login', loginFormat: 'json',
+      params: { account: 'alice', secret: 'password', tenant: 'acme' }
+    }
+  };
+  try {
+    await applyAuthHeaders(page, {}, { sub: 'freeform-login-user' }, new URL(origin + '/'));
+    assert.deepEqual(JSON.parse(receivedBody), {
+      account: 'alice', secret: 'password', tenant: 'acme'
+    });
+  } finally {
+    await new Promise(resolve => upstream.close(resolve));
+    clearCookieJar(page.id);
+  }
+});
+
+test('OAuth 附加参数覆盖内置字段', async () => {
+  let receivedBody;
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      receivedBody = Buffer.concat(chunks).toString();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ access_token: 'issued-token', expires_in: 3600 }));
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const tokenUrl = `http://127.0.0.1:${upstream.address().port}/token`;
+  const page = {
+    id: 'oauth-kv-page', url: 'https://example.test/',
+    auth: {
+      mode: 'oauth', tokenUrl, clientId: 'client', clientSecret: 'secret', scope: 'default-scope',
+      extraParams: { audience: 'api', grant_type: 'password', scope: 'override-scope' }
+    }
+  };
+  const headers = {};
+  try {
+    await applyAuthHeaders(page, headers, { sub: 'oauth-kv-user' }, new URL(page.url));
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(receivedBody)), {
+      grant_type: 'password', client_id: 'client', client_secret: 'secret',
+      scope: 'override-scope', audience: 'api'
+    });
+    assert.equal(headers.authorization, 'Bearer issued-token');
+  } finally {
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
 test('身份透传开关映射 Google 资料并拒绝过期 access_token', async () => {
   const identity = normalizeAuth({
     mode: 'identity',

@@ -1926,10 +1926,10 @@ $('authEnabled').addEventListener('change', () => {
   $('authBox').classList.toggle('hidden', !$('authEnabled').checked);
 });
 
-// 认证模式切换：basic/login 显示账号密码，header 显示自定义头，oauth 显示客户端凭证，identity 显示身份请求头名，login 额外显示登录路径与请求格式
+// 认证模式切换：basic 显示账号密码，login 显示可编辑请求参数，其他模式显示各自配置
 function setAuthMode(mode) {
   $('authMode').value = mode;
-  $('authUserPass').classList.toggle('hidden', mode === 'header' || mode === 'oauth' || mode === 'identity');
+  $('authUserPass').classList.toggle('hidden', mode !== 'basic');
   $('authLoginPath').classList.toggle('hidden', mode !== 'login');
   $('authLoginOpts').classList.toggle('hidden', mode !== 'login');
   $('authHeaderInputs').classList.toggle('hidden', mode !== 'header');
@@ -1937,6 +1937,49 @@ function setAuthMode(mode) {
   $('authOAuthFields').classList.toggle('hidden', mode !== 'oauth');
 }
 $('authMode').addEventListener('change', () => setAuthMode($('authMode').value));
+
+function addAuthKvRow(container, key = '', configured = false, value = '') {
+  const publicValue = container.dataset.kvPublic === 'true';
+  const row = document.createElement('div');
+  row.className = 'auth-kv-row';
+  const keyInput = document.createElement('input');
+  keyInput.className = 'auth-kv-key';
+  keyInput.placeholder = '键名';
+  keyInput.setAttribute('aria-label', '键名');
+  keyInput.autocomplete = 'off';
+  keyInput.value = key;
+  const valueInput = document.createElement('input');
+  valueInput.className = 'auth-kv-value';
+  valueInput.type = publicValue ? 'text' : 'password';
+  valueInput.autocomplete = publicValue ? 'off' : 'new-password';
+  valueInput.placeholder = publicValue ? '用户字段' : (configured ? '值已配置，留空保持不变' : '值');
+  valueInput.setAttribute('aria-label', '值');
+  valueInput.value = value;
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'icon-btn auth-kv-remove';
+  removeButton.title = '删除';
+  removeButton.setAttribute('aria-label', '删除此项');
+  removeButton.textContent = '✕';
+  removeButton.addEventListener('click', () => row.remove());
+  row.append(keyInput, valueInput, removeButton);
+  container.appendChild(row);
+}
+
+function setAuthKvRows(container, keys, addBlank = false, configured = true) {
+  container.innerHTML = '';
+  keys.forEach(entry => addAuthKvRow(
+    container,
+    Array.isArray(entry) ? entry[0] : entry,
+    configured,
+    Array.isArray(entry) ? entry[1] : ''
+  ));
+  if (!keys.length && addBlank) addAuthKvRow(container);
+}
+
+document.querySelectorAll('.auth-kv-add').forEach(button => {
+  button.addEventListener('click', () => addAuthKvRow($(button.dataset.kvTarget)));
+});
 
 // 填充分组下拉：已配置分组 + 当前页面分组（防止失效）+ 未分组
 function fillGroupSelect(selectedId) {
@@ -1979,38 +2022,42 @@ function openModal(page = null) {
   $('authBox').classList.toggle('hidden', !hasAuth);
   const mode = hasAuth ? (page.auth.mode || 'basic') : 'basic';
   setAuthMode(mode);
-  $('authUser').value = hasAuth ? (page.auth.username || '') : '';
+  $('authUser').value = hasAuth && mode === 'basic' ? (page.auth.username || '') : '';
   $('authPass').value = '';
-  $('authPass').placeholder = hasAuth && page.auth.hasPassword
+  $('authPass').placeholder = hasAuth && mode === 'basic' && page.auth.hasPassword
     ? '密码已配置，留空保持不变'
     : '密码';
   $('authLoginPath').value = hasAuth && page.auth.loginPath !== '/login' ? page.auth.loginPath : '';
   $('authLoginFormat').value = hasAuth && page.auth.loginFormat === 'form' ? 'form' : 'json';
-  $('authUserField').value = hasAuth && page.auth.userField !== 'user' ? (page.auth.userField || '') : '';
-  $('authPasswordField').value = hasAuth && page.auth.passwordField !== 'password' ? (page.auth.passwordField || '') : '';
-  $('authHeaderName').value = hasAuth ? (page.auth.headerName || '') : '';
-  $('authHeaderValue').value = '';
-  $('authHeaderValue').placeholder = hasAuth && page.auth.hasHeaderValue
-    ? '请求头值已配置，留空保持不变'
-    : '请求头值，如 Bearer xxx';
-  $('authUserHeader').value = hasAuth && page.auth.userHeader !== 'X-Forwarded-User' ? (page.auth.userHeader || '') : '';
-  $('authEmailHeader').value = hasAuth && page.auth.emailHeader !== 'X-Forwarded-Mail' ? (page.auth.emailHeader || '') : '';
-  $('authDisplayNameHeader').value = hasAuth && page.auth.displayNameHeader !== 'X-Forwarded-DisplayName' ? (page.auth.displayNameHeader || '') : '';
-  $('authGroupsHeader').value = hasAuth && page.auth.groupsHeader !== 'X-Forwarded-Groups' ? (page.auth.groupsHeader || '') : '';
-  const identityClaims = hasAuth && Array.isArray(page.auth.claims) ? page.auth.claims : [];
-  $('authForwardGoogleAuth').checked = hasAuth && (
-    page.auth.forwardGoogleAuth === true || identityClaims.some(mapping => mapping.claim === 'googleAuth')
-  );
-  $('authForwardGoogleAccessToken').checked = hasAuth && (
-    page.auth.forwardGoogleAccessToken === true || identityClaims.some(mapping => mapping.claim === 'googleAccessToken')
-  );
+  const loginParamKeys = hasAuth && mode === 'login' ? (page.auth.paramKeys || []) : ['user', 'password'];
+  setAuthKvRows($('authLoginKv'), loginParamKeys, false, hasAuth && mode === 'login');
+  const oauthParamKeys = hasAuth && mode === 'oauth'
+    ? (page.auth.paramKeys || [])
+    : [['grant_type', 'client_credentials'], 'client_id', 'client_secret'];
+  setAuthKvRows($('authOAuthKv'), oauthParamKeys, false, hasAuth && mode === 'oauth');
+  setAuthKvRows($('authHeaderKv'), hasAuth && mode === 'header' ? (page.auth.headerNames || []) : [], true);
+  const defaultIdentityClaims = [
+    ['X-Forwarded-User', 'email'],
+    ['X-Forwarded-Mail', 'email'],
+    ['X-Forwarded-DisplayName', 'displayName'],
+    ['X-Forwarded-Groups', 'groups'],
+    ['X-Forwarded-User-Id', 'sub'],
+    ['X-Forwarded-User-Picture', 'picture']
+  ];
+  const identityClaims = hasAuth && mode === 'identity'
+    ? (Array.isArray(page.auth.claims)
+      ? page.auth.claims.map(mapping => [mapping.header, mapping.claim])
+      : [
+          [page.auth.userHeader || 'X-Forwarded-User', 'email'],
+          [page.auth.emailHeader || 'X-Forwarded-Mail', 'email'],
+          [page.auth.displayNameHeader || 'X-Forwarded-DisplayName', 'displayName'],
+          [page.auth.groupsHeader || 'X-Forwarded-Groups', 'groups'],
+          [page.auth.idHeader || 'X-Forwarded-User-Id', 'sub'],
+          [page.auth.pictureHeader || 'X-Forwarded-User-Picture', 'picture']
+        ])
+    : defaultIdentityClaims;
+  setAuthKvRows($('authIdentityKv'), identityClaims, false, false);
   $('authTokenUrl').value = hasAuth ? (page.auth.tokenUrl || '') : '';
-  $('authClientId').value = hasAuth ? (page.auth.clientId || '') : '';
-  $('authClientSecret').value = '';
-  $('authClientSecret').placeholder = hasAuth && page.auth.hasClientSecret
-    ? 'Client Secret 已配置，留空保持不变'
-    : 'Client Secret';
-  $('authScope').value = hasAuth ? (page.auth.scope || '') : '';
   fillGroupSelect(page ? page.groupId : (groups[0]?.id || ''));
   setType(page ? page.type || 'link' : 'link');
   // 重置弹窗文件管理状态
@@ -2064,41 +2111,42 @@ $('pageForm').addEventListener('submit', async e => {
       if (mode === 'header') {
         body.auth = {
           mode,
-          headerName: $('authHeaderName').value.trim(),
-          headerValue: $('authHeaderValue').value.trim()
+          headers: AuthKv.collectKvRows($('authHeaderKv'))
         };
       } else if (mode === 'identity') {
-        body.auth = { mode };
-        const identityHeaders = {
-          userHeader: $('authUserHeader').value.trim(),
-          emailHeader: $('authEmailHeader').value.trim(),
-          displayNameHeader: $('authDisplayNameHeader').value.trim(),
-          groupsHeader: $('authGroupsHeader').value.trim()
+        const existingClaims = pages.find(page => page.id === editingId)?.auth?.claims || [];
+        body.auth = {
+          mode,
+          claims: Object.entries(AuthKv.collectKvRows($('authIdentityKv'))).map(([header, value]) => {
+            const claim = value.trim();
+            const existing = existingClaims.find(mapping =>
+              mapping.header === header && mapping.claim === claim
+            );
+            return {
+              claim,
+              header,
+              format: existing?.format || (claim === 'groups' ? 'csv' : claim === 'googleAuth' ? 'base64url' : 'text'),
+              ...((existing?.fallbackClaim || (claim === 'sub' ? 'id' : ''))
+                ? { fallbackClaim: existing?.fallbackClaim || 'id' }
+                : {})
+            };
+          })
         };
-        for (const [key, value] of Object.entries(identityHeaders)) {
-          if (value) body.auth[key] = value;
-        }
-        body.auth.forwardGoogleAuth = $('authForwardGoogleAuth').checked;
-        body.auth.forwardGoogleAccessToken = $('authForwardGoogleAccessToken').checked;
       } else if (mode === 'oauth') {
         body.auth = {
           mode,
           tokenUrl: $('authTokenUrl').value.trim(),
-          clientId: $('authClientId').value.trim(),
-          clientSecret: $('authClientSecret').value
+          params: AuthKv.collectKvRows($('authOAuthKv'))
         };
-        const scope = $('authScope').value.trim();
-        if (scope) body.auth.scope = scope;
+      } else if (mode === 'login') {
+        body.auth = {
+          mode,
+          loginPath: $('authLoginPath').value.trim() || '/login',
+          loginFormat: $('authLoginFormat').value,
+          params: AuthKv.collectKvRows($('authLoginKv'))
+        };
       } else {
         body.auth = { mode, username: $('authUser').value.trim(), password: $('authPass').value };
-        if (mode === 'login') {
-          body.auth.loginPath = $('authLoginPath').value.trim() || '/login';
-          body.auth.loginFormat = $('authLoginFormat').value;
-          const userField = $('authUserField').value.trim();
-          const passwordField = $('authPasswordField').value.trim();
-          if (userField) body.auth.userField = userField;
-          if (passwordField) body.auth.passwordField = passwordField;
-        }
       }
     } else {
       body.auth = null;

@@ -1,9 +1,12 @@
 # 更新日志
 
+## v1.5.0（2026-08-27）
+
+- 新增侧边栏页面名称搜索。
+- 新增页面 Logo 网址配置、服务端缓存和默认图标回退。
+- 优化新建/编辑页面弹窗：桌面端固定尺寸并支持内部滚动，名称、Logo 和分组统一置顶。
 - 分组改用稳定 `groupId` 关联页面；旧名称关联数据会自动迁移，重命名不再需要同步改写页面。
-
-## Unreleased
-
+- 修复上游错误响应被错误重写后可能出现白屏的问题。
 - 外部链接新增服务端/浏览器 Cookie 会话模式；浏览器模式支持人工登录和 `document.cookie`，并过滤 Hilbert 保留 Cookie。
 - 新增关联 origin 映射，标准 HTML/CSS URL、Location、Refresh、Referer、HTTP 与 WebSocket 共用 `/.hilbert/upstream/<alias>/` 路由；页面认证仅向显式信任的 alias 转发。
 - 外部页面菜单新增“在新标签页打开”，iframe 增加用户触发的顶层导航和 Storage Access 权限。

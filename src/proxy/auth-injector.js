@@ -49,7 +49,11 @@ function performLogin(page, base, user) {
   if (logicalLoginUrl.origin !== base.origin) return Promise.reject(new Error('登录地址必须与目标页面同源'));
   return assertTargetAllowed(page, logicalLoginUrl).then(validatedAddresses => new Promise((resolve, reject) => {
     const auth = page.auth;
-    const credentials = { [auth.userField]: auth.username, [auth.passwordField]: auth.password };
+    const credentials = auth.params || {
+      [auth.userField]: auth.username,
+      [auth.passwordField]: auth.password,
+      ...(auth.extraParams || {})
+    };
     const body = auth.loginFormat === 'form'
       ? new URLSearchParams(credentials).toString()
       : JSON.stringify(credentials);
@@ -83,7 +87,7 @@ function performLogin(page, base, user) {
           resolve();
           return;
         }
-        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})，请检查账号密码、登录路径与请求格式`));
+        reject(new Error(`目标站登录失败 (HTTP ${loginRes.statusCode})，请检查登录参数、登录路径与请求格式`));
       });
       loginRes.on('error', reject);
     });
@@ -102,12 +106,13 @@ function fetchOAuthToken(page) {
   return assertTargetAllowed({}, logicalTokenUrl).then(validatedAddresses => new Promise((resolve, reject) => {
     const lib = logicalTokenUrl.protocol === 'https:' ? https : http;
 
-    const params = new URLSearchParams({
+    const params = new URLSearchParams(auth.params || {
       grant_type: 'client_credentials',
       client_id: auth.clientId,
-      client_secret: auth.clientSecret
+      client_secret: auth.clientSecret,
+      ...(auth.scope ? { scope: auth.scope } : {}),
+      ...(auth.extraParams || {})
     });
-    if (auth.scope) params.append('scope', auth.scope);
 
     const body = params.toString();
     const reqOpts = {
@@ -196,7 +201,9 @@ async function applyAuthHeaders(page, headers, user, targetUrl) {
     return;
   }
   if (auth.mode === 'header') {
-    headers[auth.headerName.toLowerCase()] = auth.headerValue;
+    for (const [name, value] of Object.entries(
+      auth.headers || { [auth.headerName]: auth.headerValue }
+    )) headers[name.toLowerCase()] = value;
   } else if (auth.mode === 'login') {
     const sessionKey = `${page.id}:${userKey(user)}`;
     if (!loginSessions.has(sessionKey)) {

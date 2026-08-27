@@ -776,6 +776,37 @@ body.sidebar-pinned .sidebar-trigger {
   gap: 10px;
 }
 
+.auth-kv-section,
+.auth-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-kv-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.auth-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+  gap: 8px;
+}
+
+.auth-kv-row input {
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--main-bg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.auth-kv-add { align-self: flex-start; }
+.auth-kv-remove { color: var(--danger); }
+
 .auth-inputs input,
 .auth-login-path {
   flex: 1;
@@ -790,8 +821,10 @@ body.sidebar-pinned .sidebar-trigger {
 }
 
 .auth-inputs input::placeholder,
+.auth-kv-row input::placeholder,
 .auth-login-path::placeholder { color: var(--text-muted); }
 .auth-inputs input:focus,
+.auth-kv-row input:focus,
 .auth-login-path:focus { border-color: rgba(255, 255, 255, 0.4); }
 
 .form-hint {
@@ -2347,6 +2380,7 @@ body {
 .form-item select,
 .auth-box select,
 .auth-inputs input,
+.auth-kv-row input,
 .auth-login-path {
   background: #fff;
   border-color: #d8d8da;
@@ -2360,6 +2394,7 @@ body {
 .form-item select:focus,
 .auth-box select:focus,
 .auth-inputs input:focus,
+.auth-kv-row input:focus,
 .auth-login-path:focus {
   border-color: #10a37f;
   box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
@@ -2509,6 +2544,7 @@ body {
   .tab-item { min-width: 84px; max-width: 160px; }
   .settings-card { margin: 32px auto 64px; padding: 0 20px; }
   .group-add, .form-row, .auth-inputs { flex-direction: column; }
+  .auth-kv-row { grid-template-columns: 1fr 1fr 34px; }
   .md-toolbar { padding: 10px 16px; }
   .md-toolbar-btn { padding: 5px 8px; }
   .md-body { padding: 32px 22px 68px; font-size: 15px; }

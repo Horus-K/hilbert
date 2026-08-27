@@ -22,8 +22,28 @@ function toPublicAuth(auth) {
   }
   result.mode = mode;
   if (mode === 'basic' || mode === 'login') result.hasPassword = Boolean(auth.password);
-  if (mode === 'header') result.hasHeaderValue = Boolean(auth.headerValue);
-  if (mode === 'oauth') result.hasClientSecret = Boolean(auth.clientSecret);
+  if (mode === 'login') {
+    result.paramKeys = Object.keys(auth.params || {
+      [auth.userField || 'user']: auth.username,
+      [auth.passwordField || 'password']: auth.password,
+      ...(auth.extraParams || {})
+    });
+  }
+  if (auth.extraParams) result.extraParamKeys = Object.keys(auth.extraParams);
+  if (mode === 'header') {
+    result.hasHeaderValue = Boolean(auth.headerValue);
+    result.headerNames = Object.keys(auth.headers || (auth.headerName ? { [auth.headerName]: '' } : {}));
+  }
+  if (mode === 'oauth') {
+    result.hasClientSecret = Boolean(auth.clientSecret);
+    result.paramKeys = Object.keys(auth.params || {
+      grant_type: 'client_credentials',
+      client_id: auth.clientId,
+      client_secret: auth.clientSecret,
+      ...(auth.scope ? { scope: auth.scope } : {}),
+      ...(auth.extraParams || {})
+    });
+  }
   return result;
 }
 

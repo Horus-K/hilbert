@@ -48,6 +48,26 @@ function normalizeAuthOrigins(value, origins) {
   return normalized.every(alias => origins && origins[alias]) ? normalized : undefined;
 }
 
+function normalizeKvPairs(value, headerNames = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length > 50) return undefined;
+  const normalized = [];
+  const keys = new Set();
+  for (const [rawKey, rawValue] of entries) {
+    const key = String(rawKey).trim();
+    const entryValue = String(rawValue ?? '');
+    const keyIdentity = headerNames ? key.toLowerCase() : key;
+    if (!key || keys.has(keyIdentity)) return undefined;
+    if (headerNames && (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n]/.test(entryValue))) {
+      return undefined;
+    }
+    keys.add(keyIdentity);
+    normalized.push([key, entryValue]);
+  }
+  return Object.fromEntries(normalized);
+}
+
 /**
  * 校验并规范化认证配置
  * 支持五种模式：basic / login / oauth / header / identity
@@ -119,6 +139,11 @@ function normalizeAuth(auth) {
     return normalized;
   }
   if (mode === 'header') {
+    if (auth.headers !== undefined) {
+      const headers = normalizeKvPairs(auth.headers, true);
+      if (!headers || !Object.keys(headers).length) return undefined;
+      return { mode, headers };
+    }
     if (!auth.headerName || !String(auth.headerValue).trim()) return undefined;
     const headerName = String(auth.headerName).trim();
     const headerValue = String(auth.headerValue);
@@ -127,23 +152,38 @@ function normalizeAuth(auth) {
     return { mode, headerName, headerValue };
   }
   if (mode === 'oauth') {
-    if (!auth.tokenUrl || !auth.clientId || !auth.clientSecret) return undefined;
+    if (!auth.tokenUrl) return undefined;
     let tokenUrl = String(auth.tokenUrl).trim();
     try {
       const u = new URL(tokenUrl);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
     } catch { return undefined; }
-    const normalized = {
-      mode,
-      tokenUrl,
-      clientId: String(auth.clientId).trim(),
-      clientSecret: String(auth.clientSecret)
-    };
-    if (auth.scope) normalized.scope = String(auth.scope).trim();
+    const normalized = { mode, tokenUrl };
+    if (auth.params !== undefined) {
+      normalized.params = normalizeKvPairs(auth.params);
+      if (!normalized.params) return undefined;
+    } else {
+      if (!auth.clientId || !auth.clientSecret) return undefined;
+      normalized.clientId = String(auth.clientId).trim();
+      normalized.clientSecret = String(auth.clientSecret);
+      if (auth.scope) normalized.scope = String(auth.scope).trim();
+      if (auth.extraParams !== undefined) {
+        normalized.extraParams = normalizeKvPairs(auth.extraParams);
+        if (!normalized.extraParams) return undefined;
+      }
+    }
     return normalized;
   }
-  if (!auth.username || !auth.password) return undefined;
-  const normalized = { mode, username: String(auth.username), password: String(auth.password) };
+  const usesParams = mode === 'login' && auth.params !== undefined;
+  const normalized = { mode };
+  if (usesParams) {
+    normalized.params = normalizeKvPairs(auth.params);
+    if (!normalized.params) return undefined;
+  } else {
+    if (!auth.username || !auth.password) return undefined;
+    normalized.username = String(auth.username);
+    normalized.password = String(auth.password);
+  }
   if (mode === 'login') {
     // 登录地址可使用根路径或相对于页面 URL 的路径；运行时强制与目标页面同源。
     let loginPath = String(auth.loginPath || '/login').trim() || '/login';
@@ -152,12 +192,18 @@ function normalizeAuth(auth) {
     const loginFormat = auth.loginFormat || 'json';
     if (!['json', 'form'].includes(loginFormat)) return undefined;
     normalized.loginFormat = loginFormat;
-    // 目标站的用户名/密码字段名，默认 user/password
-    const userField = String(auth.userField || 'user').trim();
-    const passwordField = String(auth.passwordField || 'password').trim();
-    if (!userField || !passwordField) return undefined;
-    normalized.userField = userField;
-    normalized.passwordField = passwordField;
+    if (!usesParams) {
+      // 兼容旧数据：用户名、密码及附加参数在运行时合并为登录请求体。
+      const userField = String(auth.userField || 'user').trim();
+      const passwordField = String(auth.passwordField || 'password').trim();
+      if (!userField || !passwordField) return undefined;
+      normalized.userField = userField;
+      normalized.passwordField = passwordField;
+      if (auth.extraParams !== undefined) {
+        normalized.extraParams = normalizeKvPairs(auth.extraParams);
+        if (!normalized.extraParams) return undefined;
+      }
+    }
     if (auth.loginSuccessStatuses !== undefined) {
       if (!Array.isArray(auth.loginSuccessStatuses) ||
           auth.loginSuccessStatuses.some(code => !Number.isInteger(code) || code < 100 || code > 599)) {

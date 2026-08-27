@@ -379,4 +379,4 @@ spec:
 
 ## 版本
 
-见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.5.0**。
+见 [CHANGELOG.md](./CHANGELOG.md)。当前版本：**v1.5.1**。

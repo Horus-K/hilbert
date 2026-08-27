@@ -59,7 +59,14 @@ test('页面公开响应不包含认证 Secret', () => {
   assert.equal(page.auth.loginPath, '/login');
   assert.equal(page.auth.hasPassword, true);
   assert.equal(page.auth.password, undefined);
+  assert.deepEqual(page.auth.paramKeys, ['user', 'password']);
   assert.equal(source.auth.password, 'top-secret');
+
+  const kvLoginPage = toPublicPage({
+    auth: { mode: 'login', params: { account: 'alice', secret: 'password' } }
+  });
+  assert.deepEqual(kvLoginPage.auth.paramKeys, ['account', 'secret']);
+  assert.equal(kvLoginPage.auth.params, undefined);
 
   const headerPage = toPublicPage({
     auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer secret' }
@@ -68,10 +75,21 @@ test('页面公开响应不包含认证 Secret', () => {
   assert.equal(headerPage.auth.headerValue, undefined);
 
   const oauthPage = toPublicPage({
-    auth: { mode: 'oauth', tokenUrl: 'https://id.test/token', clientId: 'client', clientSecret: 'secret' }
+    auth: {
+      mode: 'oauth', tokenUrl: 'https://id.test/token', clientId: 'client', clientSecret: 'secret',
+      extraParams: { audience: 'private-api' }
+    }
   });
   assert.equal(oauthPage.auth.hasClientSecret, true);
   assert.equal(oauthPage.auth.clientSecret, undefined);
+  assert.deepEqual(oauthPage.auth.extraParamKeys, ['audience']);
+  assert.equal(oauthPage.auth.extraParams, undefined);
+
+  const headersPage = toPublicPage({
+    auth: { mode: 'header', headers: { Authorization: 'Bearer secret', 'X-Tenant': 'acme' } }
+  });
+  assert.deepEqual(headersPage.auth.headerNames, ['Authorization', 'X-Tenant']);
+  assert.equal(headersPage.auth.headers, undefined);
 });
 
 test('编辑认证配置时空 Secret 保留旧值，切换模式不错误复用', () => {
@@ -89,6 +107,49 @@ test('编辑认证配置时空 Secret 保留旧值，切换模式不错误复用
     { mode: 'oauth', clientSecret: 'old-secret' },
     { mode: 'oauth', clientId: 'client', clientSecret: '' }
   ).clientSecret, 'old-secret');
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'login', extraParams: { tenant: 'old-tenant', removed: 'old' } },
+    { mode: 'login', extraParams: { tenant: '', audience: 'new' } }
+  ).extraParams, { tenant: 'old-tenant', audience: 'new' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'oauth', extraParams: { audience: 'old-api' } },
+    { mode: 'oauth', clientId: 'updated-client' }
+  ).extraParams, { audience: 'old-api' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'header', headers: { Authorization: 'old-token', Removed: 'old' } },
+    { mode: 'header', headers: { Authorization: '', 'X-Tenant': 'acme' } }
+  ).headers, { Authorization: 'old-token', 'X-Tenant': 'acme' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'header', headers: { Authorization: 'old-token' } },
+    { mode: 'header', headers: { authorization: '' } }
+  ).headers, { authorization: 'old-token' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    {
+      mode: 'login', username: 'old-user', password: 'old-password',
+      userField: 'account', passwordField: 'secret', extraParams: { tenant: 'old-tenant' }
+    },
+    { mode: 'login', params: { account: '', secret: '', tenant: '' } }
+  ).params, { account: 'old-user', secret: 'old-password', tenant: 'old-tenant' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'login', params: { account: 'old-user', removed: 'old-value' } },
+    { mode: 'login', params: { account: '' } }
+  ).params, { account: 'old-user' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'header', headers: { Authorization: 'old-token', 'X-Old': 'remove-me' } },
+    { mode: 'header', headerName: 'X-New', headerValue: 'new-token' }
+  ).headers, { 'X-New': 'new-token' });
+
+  assert.deepEqual(mergeAuthSecrets(
+    { mode: 'header', headers: { Authorization: 'old-token' } },
+    { mode: 'header', headerName: 'authorization', headerValue: '' }
+  ).headers, { authorization: 'old-token' });
 
   assert.equal(mergeAuthSecrets(
     { mode: 'header', headerValue: 'must-not-reuse' },
@@ -183,19 +244,33 @@ test('页面认证 Secret 使用 AES-GCM 加密落盘并透明解密', () => {
   assert.equal(decryptSecret(cipher), 'super-secret');
   assert.equal(getEncryptionStatus().source, 'explicit');
 
-  pagesRepo.write([{
-    id: 'encrypted-page',
-    type: 'link',
-    name: 'Encrypted',
-    url: 'https://example.test/',
-    group: '未分组',
-    auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer disk-secret' }
-  }]);
+  pagesRepo.write([
+    {
+      id: 'encrypted-page', type: 'link', name: 'Encrypted', url: 'https://example.test/', group: '未分组',
+      auth: { mode: 'header', headerName: 'Authorization', headerValue: 'Bearer disk-secret' }
+    },
+    {
+      id: 'encrypted-kv-page', type: 'link', name: 'Encrypted KV', url: 'https://example.test/', group: '未分组',
+      auth: {
+        mode: 'oauth', tokenUrl: 'https://id.test/token', clientId: 'client', clientSecret: 'client-secret',
+        extraParams: { audience: 'private-audience' }
+      }
+    },
+    {
+      id: 'encrypted-login-kv-page', type: 'link', name: 'Encrypted Login KV',
+      url: 'https://example.test/', group: '未分组',
+      auth: { mode: 'login', loginPath: '/login', loginFormat: 'json', params: { account: 'private-user' } }
+    }
+  ]);
   const disk = fs.readFileSync(path.join(testDataDir, 'pages.json'), 'utf8');
   assert.doesNotMatch(disk, /disk-secret/);
+  assert.doesNotMatch(disk, /private-audience/);
+  assert.doesNotMatch(disk, /private-user/);
   assert.match(disk, /enc:v1:/);
   pagesRepo.invalidate();
   assert.equal(pagesRepo.read()[0].auth.headerValue, 'Bearer disk-secret');
+  assert.equal(pagesRepo.read()[1].auth.extraParams.audience, 'private-audience');
+  assert.equal(pagesRepo.read()[2].auth.params.account, 'private-user');
 });
 
 test('审计日志脱敏记录并支持过滤查询', () => {

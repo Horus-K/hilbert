@@ -305,37 +305,29 @@
                 <option value="json">登录请求格式：JSON</option>
                 <option value="form">登录请求格式：表单</option>
               </select>
-              <div class="auth-inputs">
-                <input type="text" id="authUserField" placeholder="用户名字段名（默认 user）" autocomplete="off" />
-                <input type="text" id="authPasswordField" placeholder="密码字段名（默认 password）" autocomplete="off" />
+              <div class="auth-kv-section">
+                <span class="auth-kv-label">登录请求参数</span>
+                <div class="auth-kv-list" id="authLoginKv"></div>
+                <button type="button" class="ghost-btn auth-kv-add" data-kv-target="authLoginKv">＋ 添加参数</button>
               </div>
             </div>
-            <div class="auth-inputs hidden" id="authHeaderInputs">
-              <input type="text" id="authHeaderName" placeholder="请求头名称，如 Authorization" />
-              <input type="text" id="authHeaderValue" placeholder="请求头值，如 Bearer xxx" />
+            <div class="auth-kv-section hidden" id="authHeaderInputs">
+              <div class="auth-kv-list" id="authHeaderKv"></div>
+              <button type="button" class="ghost-btn auth-kv-add" data-kv-target="authHeaderKv">＋ 添加请求头</button>
             </div>
-            <div class="auth-login-opts hidden" id="authIdentityFields">
-              <input type="text" id="authUserHeader" placeholder="身份请求头名（默认 X-Forwarded-User）" autocomplete="off" />
-              <input type="text" id="authEmailHeader" placeholder="邮箱请求头名（默认 X-Forwarded-Mail）" autocomplete="off" />
-              <input type="text" id="authDisplayNameHeader" placeholder="显示名请求头名（默认 X-Forwarded-DisplayName）" autocomplete="off" />
-              <input type="text" id="authGroupsHeader" placeholder="用户组请求头名（默认 X-Forwarded-Groups）" autocomplete="off" />
-              <label class="checkbox-label">
-                <input type="checkbox" id="authForwardGoogleAuth" />
-                透传完整 Google 用户资料（不包含 OAuth Token）
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="authForwardGoogleAccessToken" />
-                透传 Google access_token（高风险，不包含 refresh_token）
-              </label>
-              <p class="form-hint">将当前登录用户的邮箱、显示名和用户组透传给目标站，要求目标站只能通过本服务访问（防伪造）</p>
+            <div class="auth-kv-section hidden" id="authIdentityFields">
+              <span class="auth-kv-label">身份请求头（Key = 请求头名，Value = 用户字段）</span>
+              <div class="auth-kv-list" id="authIdentityKv" data-kv-public="true"></div>
+              <button type="button" class="ghost-btn auth-kv-add" data-kv-target="authIdentityKv">＋ 添加请求头</button>
+              <p class="form-hint">用户字段支持 email、displayName、groups、sub、picture 和点路径；googleAuth 会过滤令牌后编码，googleAccessToken 仅在未过期时透传（高风险）</p>
             </div>
-            <div class="hidden" id="authOAuthFields">
+            <div class="auth-login-opts hidden" id="authOAuthFields">
               <input type="text" id="authTokenUrl" placeholder="令牌端点 URL（如 https://example.com/oauth/tokens）" autocomplete="off" />
-              <div class="auth-inputs">
-                <input type="text" id="authClientId" placeholder="Client ID" autocomplete="off" />
-                <input type="password" id="authClientSecret" placeholder="Client Secret" autocomplete="new-password" />
+              <div class="auth-kv-section">
+                <span class="auth-kv-label">令牌请求参数</span>
+                <div class="auth-kv-list" id="authOAuthKv"></div>
+                <button type="button" class="ghost-btn auth-kv-add" data-kv-target="authOAuthKv">＋ 添加参数</button>
               </div>
-              <input type="text" id="authScope" placeholder="Scope（可选，如 PRINCIPAL_ROLE:ALL）" autocomplete="off" />
             </div>
           </div>
           <p class="form-hint">启用后页面将通过本地反向代理加载并自动携带认证，同时绕过目标站的 iframe 嵌入限制</p>
@@ -441,6 +433,7 @@
   <script src="/vendor/vditor/dist/index.min.js"></script>
   <script src="/page-search.js"></script>
   <script src="/page-logo.js"></script>
+  <script src="/auth-kv.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

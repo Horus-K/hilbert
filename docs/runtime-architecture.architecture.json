@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hilbert 运行时架构",
+    "locale": "zh-CN",
+    "output": "runtime-architecture.html",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [40, 60],
+    "cols": 5,
+    "gapX": 65,
+    "gapY": 80,
+    "cellW": 170,
+    "cellH": 76
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "用户浏览器",
+      "sublabel": "Hilbert UI / 外部页面",
+      "row": 1,
+      "col": 0
+    },
+    {
+      "id": "mainApp",
+      "type": "backend",
+      "label": "主站 Express App",
+      "sublabel": "PORT 默认 3000",
+      "row": 1,
+      "col": 1
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "认证与 RBAC",
+      "sublabel": "JWT / same-origin / audit",
+      "row": 0,
+      "col": 2
+    },
+    {
+      "id": "routesServices",
+      "type": "backend",
+      "label": "Routes + Services",
+      "sublabel": "/hilbert-api / page / ops",
+      "row": 1,
+      "col": 2
+    },
+    {
+      "id": "repositories",
+      "type": "database",
+      "label": "JSON Repositories",
+      "sublabel": "pages / roles / sessions",
+      "row": 1,
+      "col": 3
+    },
+    {
+      "id": "dataDir",
+      "type": "database",
+      "label": "HILBERT_DATA_DIR",
+      "sublabel": "JSON / audit / files",
+      "row": 1,
+      "col": 4
+    },
+    {
+      "id": "proxyApp",
+      "type": "security",
+      "label": "隔离代理 App",
+      "sublabel": "会话认证 · 默认端口 3001",
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "proxyCore",
+      "type": "backend",
+      "label": "代理核心",
+      "sublabel": "鉴权注入 / 改写 / SSRF",
+      "row": 2,
+      "col": 2
+    },
+    {
+      "id": "upstreams",
+      "type": "external",
+      "label": "外部上游站点",
+      "sublabel": "HTTP / HTTPS / WebSocket",
+      "row": 2,
+      "col": 4
+    },
+    {
+      "id": "googleOAuth",
+      "type": "external",
+      "label": "Google OAuth",
+      "sublabel": "登录与 callback",
+      "row": 0,
+      "col": 4
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "单 Node.js 进程",
+      "wraps": ["mainApp", "auth", "routesServices", "repositories", "proxyApp", "proxyCore"],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "外部内容隔离 origin",
+      "wraps": ["proxyApp", "proxyCore"],
+      "pad": 12
+    }
+  ],
+  "connections": [
+    { "id": "uiRequest", "from": "browser", "to": "mainApp", "label": "静态 UI + HTTPS API", "variant": "emphasis" },
+    { "id": "mainAuth", "from": "mainApp", "to": "auth", "label": "JWT / RBAC", "fromSide": "top", "toSide": "bottom" },
+    { "id": "mainRoutes", "from": "mainApp", "to": "routesServices", "label": "Express 路由" },
+    { "id": "serviceData", "from": "routesServices", "to": "repositories", "label": "同步读写" },
+    { "id": "persist", "from": "repositories", "to": "dataDir", "label": "fsync + rename + .bak" },
+    { "id": "oauth", "from": "auth", "to": "googleOAuth", "label": "OAuth 2.0 重定向 / callback", "variant": "security" },
+    { "id": "isolatedRequest", "from": "browser", "to": "proxyApp", "label": "独立 origin HTTP / WS", "variant": "security" },
+    { "id": "dispatch", "from": "proxyApp", "to": "proxyCore", "label": "Host / path 路由" },
+    { "id": "pageConfig", "from": "routesServices", "to": "proxyCore", "label": "刷新代理路由", "variant": "dashed", "labelAt": [580, 290] },
+    { "id": "forward", "from": "proxyCore", "to": "upstreams", "label": "HTTP(S) / WebSocket 转发", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主站请求链",
+      "items": ["浏览器 → 主站 Express → Routes/Services → JSON Repositories → HILBERT_DATA_DIR"]
+    },
+    {
+      "dot": "rose",
+      "title": "隔离代理链",
+      "items": ["浏览器从独立 origin 访问；代理核心完成认证注入、内容改写、SSRF 防护与 WebSocket 转发"]
+    }
+  ]
+}

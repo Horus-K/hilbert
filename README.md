@@ -35,6 +35,12 @@
 
 Node.js + Express，JSON 文件持久化（无数据库），前端为原生 HTML/CSS/JS（`marked` 渲染 Markdown）。
 
+## 运行时架构
+
+[![Hilbert 运行时架构](docs/runtime-architecture.visual-check.1440x900.light.png)](docs/runtime-architecture.html)
+
+[交互版架构图](docs/runtime-architecture.html)（下载后用浏览器打开） · [Archify 规格源文件](docs/runtime-architecture.architecture.json)
+
 ## 本地运行
 
 ```bash
